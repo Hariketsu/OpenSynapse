@@ -1,0 +1,21 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{cs,ps1}]
+indent_style = space
+indent_size = 4
+
+[*.{csproj,props,xaml,yml,yaml,json,md}]
+indent_style = space
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[PowerPilot-2.0.0/PowerPilot.Native.cs]
+generated_code = true
