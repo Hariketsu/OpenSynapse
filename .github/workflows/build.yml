@@ -1,0 +1,27 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+      - shell: powershell
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD\scripts\Test-Milestones.ps1", [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors) { throw ($errors | Out-String) }
+      - run: dotnet restore OpenSynapse.sln
+      - run: dotnet format OpenSynapse.sln --verify-no-changes --no-restore
+      - run: dotnet build OpenSynapse.sln --configuration Release --no-restore
+      - run: dotnet test tests/OpenSynapse.Core.Tests/OpenSynapse.Core.Tests.csproj --configuration Release --no-build
