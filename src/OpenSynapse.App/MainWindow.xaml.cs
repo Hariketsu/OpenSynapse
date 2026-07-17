@@ -1,0 +1,165 @@
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Windows;
+using Microsoft.Win32;
+using OpenSynapse.Core;
+using Forms = System.Windows.Forms;
+
+namespace OpenSynapse.App;
+
+public partial class MainWindow : Window
+{
+    private readonly AgentClient agent = new();
+    private readonly Forms.NotifyIcon tray;
+    private ModeSelection selection = ModeSelection.Auto;
+    private bool exiting;
+
+    public MainWindow()
+    {
+        InitializeComponent();
+        tray = new Forms.NotifyIcon
+        {
+            Text = "OpenSynapse",
+            Icon = System.Drawing.SystemIcons.Application,
+            Visible = true,
+            ContextMenuStrip = new Forms.ContextMenuStrip()
+        };
+        tray.DoubleClick += (_, _) => Dispatcher.Invoke(ShowWindow);
+        tray.ContextMenuStrip.Items.Add("Open", null, (_, _) => Dispatcher.Invoke(ShowWindow));
+        tray.ContextMenuStrip.Items.Add("Exit and restore", null, (_, _) => Dispatcher.Invoke(async () => await ExitAsync()));
+        SystemEvents.PowerModeChanged += PowerModeChanged;
+    }
+
+    private async void Window_Loaded(object sender, RoutedEventArgs e)
+    {
+        UpdatePowerText();
+        await RefreshAsync();
+    }
+
+    private void PowerModeChanged(object sender, PowerModeChangedEventArgs e)
+    {
+        if (e.Mode != PowerModes.StatusChange) return;
+        Dispatcher.BeginInvoke(async () =>
+        {
+            UpdatePowerText();
+            await RefreshAsync();
+        });
+    }
+
+    private async void Auto_Click(object sender, RoutedEventArgs e) => await SelectAsync(ModeSelection.Auto);
+    private async void Performance_Click(object sender, RoutedEventArgs e) => await SelectAsync(ModeSelection.Performance);
+    private async void Quiet_Click(object sender, RoutedEventArgs e) => await SelectAsync(ModeSelection.Quiet);
+    private async void Refresh_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
+
+    private async void ApplyDpi_Click(object sender, RoutedEventArgs e)
+    {
+        if (!int.TryParse(DpiBox.Text, out var dpi)) { Log("DPI must be a number."); return; }
+        await SendAsync(new AgentRequest(AgentOperation.SetMouseDpi, DpiX: dpi, DpiY: dpi));
+    }
+
+    private async void ApplyPolling_Click(object sender, RoutedEventArgs e)
+    {
+        var value = (PollingBox.SelectedItem as System.Windows.Controls.ComboBoxItem)?.Content?.ToString();
+        if (!int.TryParse(value, out var hz)) return;
+        await SendAsync(new AgentRequest(AgentOperation.SetMousePollingRate, PollingRate: hz));
+    }
+
+    private async Task ApplySelectionAsync()
+    {
+        ModeText.Text = $"Selection: {selection}";
+        await SendAsync(new AgentRequest(AgentOperation.SetSelection, Selection: selection));
+    }
+
+    private async Task SelectAsync(ModeSelection value)
+    {
+        selection = value;
+        await ApplySelectionAsync();
+    }
+
+    private async Task RefreshAsync() => await SendAsync(new AgentRequest(AgentOperation.Status));
+
+    private async Task<bool> SendAsync(AgentRequest request)
+    {
+        try
+        {
+            var response = await agent.SendAsync(request);
+            Log(response.Message);
+            if (response.Status is not null) UpdateStatus(response.Status);
+            return response.Success;
+        }
+        catch (Exception ex)
+        {
+            Log(ex.Message);
+            return false;
+        }
+    }
+
+    private void UpdateStatus(AgentStatus status)
+    {
+        selection = status.Selection;
+        ModeText.Text = $"Selection: {status.Selection}   Power: {status.PowerSource}   Active: {status.ActiveMode?.ToString() ?? "unmanaged"}";
+        var mouse = status.RazerDevices.FirstOrDefault();
+        MouseText.Text = mouse is null
+            ? "No supported mouse detected. Supported PIDs: 00B6, 00B7, 00C2, 00C3."
+            : $"{mouse.Name} ({mouse.Connection})  Firmware {mouse.FirmwareVersion ?? "?"}  "
+              + $"DPI {mouse.DpiX?.ToString() ?? "?"}/{mouse.DpiY?.ToString() ?? "?"}  "
+              + $"Polling {mouse.PollingRate?.ToString() ?? "?"} Hz  Battery {mouse.BatteryPercent?.ToString() ?? "?"}%";
+    }
+
+    private void UpdatePowerText() => PowerText.Text = $"Power: {GetPowerSource()}";
+
+    private static PowerSource GetPowerSource() => GetSystemPowerStatus(out var status)
+        ? status.ACLineStatus switch { 1 => PowerSource.Ac, 0 => PowerSource.Battery, _ => PowerSource.Unknown }
+        : PowerSource.Unknown;
+
+    private void Log(string message)
+    {
+        LogBox.AppendText($"{DateTime.Now:HH:mm:ss}  {message}{Environment.NewLine}");
+        LogBox.ScrollToEnd();
+    }
+
+    private void ShowWindow()
+    {
+        Show();
+        WindowState = WindowState.Normal;
+        Activate();
+    }
+
+    private void Window_Closing(object? sender, CancelEventArgs e)
+    {
+        if (exiting) return;
+        e.Cancel = true;
+        Hide();
+    }
+
+    private async void Exit_Click(object sender, RoutedEventArgs e) => await ExitAsync();
+
+    private async Task ExitAsync()
+    {
+        if (exiting) return;
+        exiting = true;
+        if (!await SendAsync(new AgentRequest(AgentOperation.Shutdown)))
+        {
+            exiting = false;
+            return;
+        }
+        SystemEvents.PowerModeChanged -= PowerModeChanged;
+        tray.Visible = false;
+        tray.Dispose();
+        System.Windows.Application.Current.Shutdown();
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SYSTEM_POWER_STATUS
+    {
+        public byte ACLineStatus;
+        public byte BatteryFlag;
+        public byte BatteryLifePercent;
+        public byte SystemStatusFlag;
+        public uint BatteryLifeTime;
+        public uint BatteryFullLifeTime;
+    }
+
+    [DllImport("kernel32.dll")]
+    private static extern bool GetSystemPowerStatus(out SYSTEM_POWER_STATUS status);
+}
