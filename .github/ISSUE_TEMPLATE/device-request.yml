@@ -1,0 +1,75 @@
+name: Device support request
+description: Propose a device with reproducible identity and verification evidence.
+title: "device: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A product name alone is not enough to declare compatibility. OpenSynapse requires exact identity, protocol provenance, and hardware verification.
+
+  - type: input
+    id: model
+    attributes:
+      label: Manufacturer and exact model
+    validations:
+      required: true
+
+  - type: input
+    id: identity
+    attributes:
+      label: VID:PID
+      placeholder: e.g. 1532:00B7
+    validations:
+      required: true
+
+  - type: textarea
+    id: connection
+    attributes:
+      label: Connection roles
+      description: List wired, Bluetooth, standard receiver, HyperPolling dongle, or other relevant paths.
+    validations:
+      required: true
+
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+      placeholder: Unknown is acceptable when it cannot be read.
+    validations:
+      required: true
+
+  - type: textarea
+    id: capabilities
+    attributes:
+      label: Requested capabilities
+      description: List concrete reads or writes, not “full support.”
+    validations:
+      required: true
+
+  - type: textarea
+    id: provenance
+    attributes:
+      label: Protocol evidence and provenance
+      description: Link public documentation or describe legally shareable captures/implementations and their license.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: hardware
+    attributes:
+      label: Can you test changes on this hardware?
+      options:
+        - Yes, I own or am authorized to test it
+        - No
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety acknowledgement
+      options:
+        - label: I understand that unknown devices remain unsupported until their identity and commands are verified.
+          required: true
+        - label: I will not submit proprietary binaries, credentials, personal identifiers, or unlawfully obtained material.
+          required: true

@@ -1,0 +1,84 @@
+name: Bug report
+description: Report a reproducible OpenSynapse failure or regression.
+title: "bug: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report security vulnerabilities here. Follow SECURITY.md instead.
+
+  - type: input
+    id: revision
+    attributes:
+      label: OpenSynapse revision
+      description: Release version or full commit hash.
+      placeholder: e.g. 0123456789abcdef
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: e.g. Windows 11 24H2, build 26100
+    validations:
+      required: true
+
+  - type: textarea
+    id: device
+    attributes:
+      label: Device identity
+      description: Include model, VID:PID, firmware, and wired/receiver/dongle connection. Write “None” for system-only issues.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1. Start ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: rollback
+    attributes:
+      label: State and rollback result
+      description: Describe any power, display, or device state changed and whether restoration succeeded.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Remove serial numbers, usernames, and other personal data. Do not paste unrelated logs.
+      render: text
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I closed Razer Synapse before reproducing a Razer device-control issue.
+        - label: I searched existing issues for this failure.
+          required: true
+        - label: This report does not disclose a security vulnerability.
+          required: true
