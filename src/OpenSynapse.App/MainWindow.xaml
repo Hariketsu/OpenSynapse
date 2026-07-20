@@ -1,7 +1,7 @@
 <Window x:Class="OpenSynapse.App.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="OpenSynapse" Height="620" Width="760" MinHeight="560" MinWidth="680"
+        Title="OpenSynapse" Height="820" Width="940" MinHeight="720" MinWidth="820"
         Background="#0B0D0C" Foreground="#F4F4F4" Loaded="Window_Loaded" Closing="Window_Closing">
     <Window.Resources>
         <Style TargetType="Button">
@@ -17,6 +17,10 @@
             <Setter Property="Background" Value="#171A18"/><Setter Property="Foreground" Value="White"/>
             <Setter Property="Padding" Value="8,6"/>
         </Style>
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="#F4F4F4"/><Setter Property="Margin" Value="0,0,18,0"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
         <Style TargetType="GroupBox">
             <Setter Property="BorderBrush" Value="#3C423E"/><Setter Property="Margin" Value="0,14,0,0"/>
             <Setter Property="Padding" Value="14"/><Setter Property="Foreground" Value="#44D62C"/>
@@ -25,7 +29,7 @@
     <Grid Margin="28">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/><RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         <StackPanel>
             <TextBlock Text="OPENSYNAPSE" FontSize="30" FontWeight="Bold"/>
@@ -41,7 +45,48 @@
                 <TextBlock x:Name="ModeText" Margin="0,12,0,0" Foreground="#C6CBC8"/>
             </StackPanel>
         </GroupBox>
-        <GroupBox Grid.Row="2" Header="Razer DeathAdder V3 Pro">
+        <GroupBox Grid.Row="2" Header="Display policy">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <WrapPanel>
+                    <CheckBox x:Name="ManageAdvancedColorCheck" Content="Manage HDR / Advanced Color"/>
+                    <CheckBox x:Name="ManageBrightnessCheck" Content="Manage internal brightness"/>
+                    <CheckBox x:Name="ManageScalingCheck" Content="Repair display scaling"/>
+                </WrapPanel>
+                <WrapPanel Grid.Row="1" Margin="0,12,0,0" VerticalAlignment="Center">
+                    <TextBlock Text="Internal scale" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <ComboBox x:Name="InternalScaleBox" Width="82"/>
+                    <TextBlock Text="External scale" VerticalAlignment="Center" Margin="20,0,8,0"/>
+                    <ComboBox x:Name="ExternalScaleBox" Width="82"/>
+                </WrapPanel>
+                <WrapPanel Grid.Row="2" Margin="0,12,0,0" VerticalAlignment="Center">
+                    <TextBlock Text="Balanced brightness" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                    <TextBox x:Name="BalancedBrightnessBox" Width="58"/>
+                    <TextBlock Text="Quiet brightness" VerticalAlignment="Center" Margin="20,0,8,0"/>
+                    <TextBox x:Name="QuietBrightnessBox" Width="58"/>
+                    <TextBlock Text="Balanced Hz" VerticalAlignment="Center" Margin="20,0,8,0"/>
+                    <TextBox x:Name="BalancedRefreshBox" Width="58"/>
+                    <TextBlock Text="Quiet Hz" VerticalAlignment="Center" Margin="20,0,8,0"/>
+                    <TextBox x:Name="QuietRefreshBox" Width="58"/>
+                </WrapPanel>
+                <Grid Grid.Row="3" Margin="0,12,0,0">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <WrapPanel VerticalAlignment="Center">
+                        <TextBlock Text="Balanced battery minimum" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <TextBox x:Name="BalancedThresholdBox" Width="58" ToolTip="0-100 percent"/>
+                    </WrapPanel>
+                    <WrapPanel Grid.Column="1" Margin="20,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="Refresh policy" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                        <ComboBox x:Name="RefreshPolicyBox" Width="190"/>
+                    </WrapPanel>
+                    <Button Grid.Column="2" Content="Save and apply" Margin="14,0,0,0" Click="SaveDisplayPolicy_Click"/>
+                </Grid>
+            </Grid>
+        </GroupBox>
+        <GroupBox Grid.Row="3" Header="Razer DeathAdder V3 Pro">
             <Grid>
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <StackPanel>
@@ -60,9 +105,9 @@
                 <Button Grid.Column="1" Content="Refresh" VerticalAlignment="Top" Margin="12,0,0,0" Click="Refresh_Click"/>
             </Grid>
         </GroupBox>
-        <TextBox Grid.Row="3" x:Name="LogBox" Margin="0,14,0,0" IsReadOnly="True" TextWrapping="Wrap"
+        <TextBox Grid.Row="4" x:Name="LogBox" Margin="0,14,0,0" IsReadOnly="True" TextWrapping="Wrap"
                  VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="12"/>
-        <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
             <Button Content="Run self-test" Click="SelfTest_Click"/>
             <Button Content="Restore captured state and exit" Click="Exit_Click"/>
         </StackPanel>

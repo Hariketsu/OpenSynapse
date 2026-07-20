@@ -1,8 +1,10 @@
 using System.ComponentModel;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
 using Microsoft.Win32;
 using OpenSynapse.Core;
+using Controls = System.Windows.Controls;
 using Forms = System.Windows.Forms;
 
 namespace OpenSynapse.App;
@@ -17,6 +19,9 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        InternalScaleBox.ItemsSource = DisplayPolicySettings.AllowedDisplayScales;
+        ExternalScaleBox.ItemsSource = DisplayPolicySettings.AllowedDisplayScales;
+        RefreshPolicyBox.ItemsSource = Enum.GetValues<RefreshPolicy>();
         tray = new Forms.NotifyIcon
         {
             Text = "OpenSynapse",
@@ -53,6 +58,20 @@ public partial class MainWindow : Window
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
     private async void SelfTest_Click(object sender, RoutedEventArgs e) =>
         await SendAsync(new AgentRequest(AgentOperation.SelfTest));
+
+    private async void SaveDisplayPolicy_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var settings = ReadDisplayPolicy();
+            settings.Validate();
+            await SendAsync(new AgentRequest(AgentOperation.SetDisplayPolicy, DisplayPolicy: settings));
+        }
+        catch (Exception ex) when (ex is InvalidDataException or InvalidOperationException)
+        {
+            Log(ex.Message);
+        }
+    }
 
     private async void ApplyDpi_Click(object sender, RoutedEventArgs e)
     {
@@ -107,7 +126,46 @@ public partial class MainWindow : Window
             : $"{mouse.Name} ({mouse.Connection})  Firmware {mouse.FirmwareVersion ?? "?"}  "
               + $"DPI {mouse.DpiX?.ToString() ?? "?"}/{mouse.DpiY?.ToString() ?? "?"}  "
               + $"Polling {mouse.PollingRate?.ToString() ?? "?"} Hz  Battery {mouse.BatteryPercent?.ToString() ?? "?"}%";
+        if (status.DisplayPolicy is not null) UpdateDisplayPolicy(status.DisplayPolicy);
     }
+
+    private DisplayPolicySettings ReadDisplayPolicy() => new(
+        ReadInteger(BalancedThresholdBox, "Balanced battery minimum"),
+        ManageAdvancedColorCheck.IsChecked == true,
+        ManageBrightnessCheck.IsChecked == true,
+        ManageScalingCheck.IsChecked == true,
+        RefreshPolicyBox.SelectedItem is RefreshPolicy refreshPolicy
+            ? refreshPolicy
+            : throw new InvalidOperationException("Select a refresh policy."),
+        ReadScale(InternalScaleBox, "internal display scale"),
+        ReadScale(ExternalScaleBox, "external display scale"),
+        ReadInteger(BalancedBrightnessBox, "Balanced brightness"),
+        ReadInteger(QuietBrightnessBox, "Quiet brightness"),
+        ReadInteger(BalancedRefreshBox, "Balanced refresh rate"),
+        ReadInteger(QuietRefreshBox, "Quiet refresh rate"));
+
+    private void UpdateDisplayPolicy(DisplayPolicySettings settings)
+    {
+        ManageAdvancedColorCheck.IsChecked = settings.ManageAdvancedColor;
+        ManageBrightnessCheck.IsChecked = settings.ManageBrightness;
+        ManageScalingCheck.IsChecked = settings.ManageDisplayScaling;
+        RefreshPolicyBox.SelectedItem = settings.RefreshPolicy;
+        InternalScaleBox.SelectedItem = settings.InternalDisplayScalePercent;
+        ExternalScaleBox.SelectedItem = settings.ExternalDisplayScalePercent;
+        BalancedThresholdBox.Text = settings.BalancedBatteryThresholdPercent.ToString();
+        BalancedBrightnessBox.Text = settings.BalancedBrightnessPercent.ToString();
+        QuietBrightnessBox.Text = settings.QuietBrightnessPercent.ToString();
+        BalancedRefreshBox.Text = settings.BalancedRefreshRateHz.ToString();
+        QuietRefreshBox.Text = settings.QuietRefreshRateHz.ToString();
+    }
+
+    private static int ReadScale(Controls.ComboBox box, string name) => box.SelectedItem is int value
+        ? value
+        : throw new InvalidOperationException($"Select a supported {name}.");
+
+    private static int ReadInteger(Controls.TextBox box, string name) => int.TryParse(box.Text, out var value)
+        ? value
+        : throw new InvalidDataException($"{name} must be a number.");
 
     private void UpdatePowerText() => PowerText.Text = $"Power: {GetPowerSource()}";
 

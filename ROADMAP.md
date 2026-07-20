@@ -15,6 +15,7 @@ The roadmap describes validation gates, not delivery dates. A capability moves f
 - [x] Non-elevated WPF control panel and per-user elevated agent.
 - [x] Adapter-aware Auto, Performance, Balanced, and Quiet policy selection.
 - [x] Captured state and power-plan rollback.
+- [x] Validated desktop editing for display policy, scaling, brightness, and refresh behavior.
 - [x] DeathAdder V3 Pro discovery, status, DPI, and standard polling commands.
 - [ ] Run the reversible Windows policy smoke test on the target machine.
 - [ ] Run read/write verification on each claimed DeathAdder V3 Pro PID and connection role.

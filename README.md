@@ -82,12 +82,14 @@ dotnet run --project src/OpenSynapse.Agent -- self-test
 
 ### Publish and install
 
-Create framework-dependent Windows binaries, then run the installer from an elevated PowerShell terminal belonging to the target user:
+Create self-contained Windows binaries, then run the installer from an elevated PowerShell terminal belonging to the target user:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\Publish-OpenSynapse.ps1
 powershell -ExecutionPolicy Bypass -File scripts\Install-OpenSynapse.ps1
 ```
+
+Pass `-FrameworkDependent` only when the matching .NET 10 Desktop Runtime is already registered on the target machine.
 
 The installer copies Agent/App outputs under `%ProgramFiles%\OpenSynapse`, registers a delayed per-user elevated Agent task, and creates a Start menu shortcut for the non-elevated App. To uninstall, restore captured state, remove managed power plans, and delete installed files:
 
@@ -110,7 +112,7 @@ The script verifies Performance/Balanced/Quiet application (Balanced when batter
 
 ## Configuration
 
-The agent creates `%LOCALAPPDATA%\OpenSynapse\config.json` with a versioned schema. It stores the selected mode, the Balanced battery threshold, optional Advanced Color/brightness/scaling management, internal/external scaling, Balanced/Quiet brightness, and refresh policy (`FollowMode`, `Unmanaged`, `Maximum`, `Fixed60`, `Fixed120`, or `Fixed240`). Invalid or newer configuration is rejected without overwriting the file. Captured rollback data remains separate in `state.json`.
+The desktop panel reads and edits the display policy through the elevated agent. The agent stores it in `%LOCALAPPDATA%\OpenSynapse\config.json` with a versioned schema: selected mode, Balanced battery threshold, optional Advanced Color/brightness/scaling management, internal/external scaling, Balanced/Quiet brightness, and refresh policy (`FollowMode`, `Unmanaged`, `Maximum`, `Fixed60`, `Fixed120`, or `Fixed240`). Invalid or newer configuration is rejected without overwriting the file. Before applying changed display settings, the agent confirms restoration of the previous display snapshot; captured rollback data remains separate in `state.json`.
 
 ## Safety and privacy
 

@@ -31,7 +31,7 @@ flowchart LR
 
 ### OpenSynapse.App
 
-Runs without elevation. It displays status and sends typed requests to the agent. Closing the window hides it; explicit exit requests restoration and agent shutdown. It never writes Windows policy or HID state directly.
+Runs without elevation. It displays status, edits validated display-policy settings, and sends typed requests to the agent. Closing the window hides it; explicit exit requests restoration and agent shutdown. It never writes configuration, Windows policy, or HID state directly.
 
 The App and serving Agent each hold a per-user named single-instance lease. A second App launch signals the existing window to activate; a second serving Agent exits without competing for policy ownership.
 
@@ -40,6 +40,8 @@ The App and serving Agent each hold a per-user named single-instance lease. A se
 Runs elevated for the current user. It owns mode selection, power-source reactions, state capture, restoration, Windows policy changes, device enumeration, HID commands, bounded local logs, and read-only diagnostics. The named pipe accepts only the current user and one bounded JSON request per connection.
 
 Display changes are debounced before the active policy is reapplied. Newly active displays are appended to the rollback snapshot before scaling or Advanced Color changes; existing snapshots are never replaced by hot-plug state.
+
+When display-policy configuration changes, the agent validates the complete replacement, confirms restoration of the previous display snapshot, clears the active-mode marker, atomically saves the new configuration, and applies the resolved mode again. A failed restore leaves the prior configuration unchanged for a deliberate retry.
 
 ### OpenSynapse.Core
 

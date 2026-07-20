@@ -77,6 +77,30 @@ public sealed class ConfigurationStoreTests
     }
 
     [TestMethod]
+    public void WithDisplayPolicyPreservesSelectionAndMapsEverySetting()
+    {
+        var original = new OpenSynapseConfig { Selection = ModeSelection.Performance };
+        var settings = new DisplayPolicySettings(
+            55,
+            false,
+            false,
+            false,
+            RefreshPolicy.Fixed240,
+            175,
+            150,
+            65,
+            35,
+            144,
+            75);
+
+        var updated = original.WithDisplayPolicy(settings);
+
+        Assert.AreEqual(ModeSelection.Performance, updated.Selection);
+        Assert.AreEqual(settings, updated.ToDisplayPolicySettings());
+        Assert.AreEqual(RefreshPolicy.FollowMode, original.RefreshPolicy);
+    }
+
+    [TestMethod]
     public void LoadRejectsInvalidConfigurationWithoutOverwritingIt()
     {
         const string invalid = "{\"schemaVersion\":1,\"internalDisplayScalePercent\":110}";

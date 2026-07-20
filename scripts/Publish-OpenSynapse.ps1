@@ -1,13 +1,19 @@
 [CmdletBinding()]
 param(
     [ValidateSet('win-x64', 'win-arm64')][string]$Runtime = 'win-x64',
-    [switch]$SelfContained,
+    [switch]$FrameworkDependent,
     [string]$DotnetPath
 )
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
-$output = Join-Path $root 'artifacts\publish'
+$artifacts = [IO.Path]::GetFullPath((Join-Path $root 'artifacts'))
+$output = [IO.Path]::GetFullPath((Join-Path $artifacts 'publish'))
+$separator = [IO.Path]::DirectorySeparatorChar
+$artifactsPrefix = $artifacts.TrimEnd($separator, [IO.Path]::AltDirectorySeparatorChar) + $separator
+if (-not $output.StartsWith($artifactsPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'Resolved publish output is outside the repository artifacts directory.'
+}
 
 if ([string]::IsNullOrWhiteSpace($DotnetPath)) {
     $dotnetCommand = Get-Command dotnet -ErrorAction SilentlyContinue
@@ -28,15 +34,20 @@ if ([string]::IsNullOrWhiteSpace($DotnetPath) -or
 }
 
 $dotnetExecutable = [System.IO.Path]::GetFullPath($DotnetPath)
+$agentOutput = Join-Path $output 'Agent'
+$appOutput = Join-Path $output 'App'
+foreach ($directory in @($agentOutput, $appOutput)) {
+    if (Test-Path -LiteralPath $directory) { Remove-Item -LiteralPath $directory -Recurse -Force }
+}
 $common = @(
     '--configuration', 'Release',
     '--runtime', $Runtime,
-    '--self-contained', $SelfContained.IsPresent.ToString().ToLowerInvariant()
+    '--self-contained', (-not $FrameworkDependent.IsPresent).ToString().ToLowerInvariant()
 )
 
-& $dotnetExecutable publish (Join-Path $root 'src\OpenSynapse.Agent\OpenSynapse.Agent.csproj') @common --output (Join-Path $output 'Agent')
+& $dotnetExecutable publish (Join-Path $root 'src\OpenSynapse.Agent\OpenSynapse.Agent.csproj') @common --output $agentOutput
 if ($LASTEXITCODE -ne 0) { throw 'Agent publish failed.' }
-& $dotnetExecutable publish (Join-Path $root 'src\OpenSynapse.App\OpenSynapse.App.csproj') @common --output (Join-Path $output 'App')
+& $dotnetExecutable publish (Join-Path $root 'src\OpenSynapse.App\OpenSynapse.App.csproj') @common --output $appOutput
 if ($LASTEXITCODE -ne 0) { throw 'App publish failed.' }
 
 Write-Host "OpenSynapse publish output: $output"

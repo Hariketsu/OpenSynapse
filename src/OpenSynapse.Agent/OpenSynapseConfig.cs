@@ -5,11 +5,6 @@ namespace OpenSynapse.Agent;
 
 internal sealed class OpenSynapseConfig
 {
-    private static readonly int[] AllowedDisplayScales =
-    [
-        100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500
-    ];
-
     public const int CurrentSchemaVersion = 2;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
@@ -30,34 +25,41 @@ internal sealed class OpenSynapseConfig
     {
         if (!Enum.IsDefined(Selection))
             throw new InvalidDataException($"Unsupported mode selection {Selection}.");
-        if (!Enum.IsDefined(RefreshPolicy))
-            throw new InvalidDataException($"Unsupported refresh policy {RefreshPolicy}.");
-        if (BalancedBatteryThresholdPercent is < 0 or > 100)
-            throw new InvalidDataException("Balanced battery threshold must be between 0 and 100 percent.");
-        ValidateScale(InternalDisplayScalePercent, nameof(InternalDisplayScalePercent));
-        ValidateScale(ExternalDisplayScalePercent, nameof(ExternalDisplayScalePercent));
-        ValidatePercentage(BalancedBrightnessPercent, nameof(BalancedBrightnessPercent));
-        ValidatePercentage(QuietBrightnessPercent, nameof(QuietBrightnessPercent));
-        ValidateRefreshRate(BalancedRefreshRateHz, nameof(BalancedRefreshRateHz));
-        ValidateRefreshRate(QuietRefreshRateHz, nameof(QuietRefreshRateHz));
+        ToDisplayPolicySettings().Validate();
     }
 
-    private static void ValidateScale(int value, string name)
-    {
-        if (!AllowedDisplayScales.Contains(value))
-            throw new InvalidDataException($"{name} must be a supported Windows scale percentage.");
-    }
+    public DisplayPolicySettings ToDisplayPolicySettings() => new(
+        BalancedBatteryThresholdPercent,
+        ManageAdvancedColor,
+        ManageBrightness,
+        ManageDisplayScaling,
+        RefreshPolicy,
+        InternalDisplayScalePercent,
+        ExternalDisplayScalePercent,
+        BalancedBrightnessPercent,
+        QuietBrightnessPercent,
+        BalancedRefreshRateHz,
+        QuietRefreshRateHz);
 
-    private static void ValidatePercentage(int value, string name)
+    public OpenSynapseConfig WithDisplayPolicy(DisplayPolicySettings settings)
     {
-        if (value is < 0 or > 100)
-            throw new InvalidDataException($"{name} must be between 0 and 100 percent.");
-    }
-
-    private static void ValidateRefreshRate(int value, string name)
-    {
-        if (value is < 24 or > 1000)
-            throw new InvalidDataException($"{name} must be between 24 and 1000 Hz.");
+        settings.Validate();
+        return new OpenSynapseConfig
+        {
+            SchemaVersion = SchemaVersion,
+            Selection = Selection,
+            BalancedBatteryThresholdPercent = settings.BalancedBatteryThresholdPercent,
+            ManageAdvancedColor = settings.ManageAdvancedColor,
+            ManageBrightness = settings.ManageBrightness,
+            ManageDisplayScaling = settings.ManageDisplayScaling,
+            RefreshPolicy = settings.RefreshPolicy,
+            InternalDisplayScalePercent = settings.InternalDisplayScalePercent,
+            ExternalDisplayScalePercent = settings.ExternalDisplayScalePercent,
+            BalancedBrightnessPercent = settings.BalancedBrightnessPercent,
+            QuietBrightnessPercent = settings.QuietBrightnessPercent,
+            BalancedRefreshRateHz = settings.BalancedRefreshRateHz,
+            QuietRefreshRateHz = settings.QuietRefreshRateHz
+        };
     }
 }
 

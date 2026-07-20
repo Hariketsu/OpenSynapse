@@ -127,6 +127,26 @@ internal sealed class AgentController
                     config,
                     powerSnapshot);
 
+            case AgentOperation.SetDisplayPolicy:
+                RequireAdministrator();
+                var displaySettings = request.DisplayPolicy
+                    ?? throw new ArgumentException("DisplayPolicy is required.");
+                var updatedConfig = config.WithDisplayPolicy(displaySettings);
+                var existingDisplayRestored = displays.Restore(state);
+                if (!existingDisplayRestored)
+                    throw new InvalidOperationException(
+                        "Existing display state restoration remains pending; settings were not changed.");
+                state.ActiveMode = null;
+                store.Save(state);
+                configurationStore.Save(updatedConfig);
+                var updatedPowerSnapshot = powerSupply.GetSnapshot();
+                var updatedMode = ModeSelector.Resolve(
+                    updatedConfig.Selection,
+                    updatedPowerSnapshot,
+                    updatedConfig.BalancedBatteryThresholdPercent);
+                _ = log.TryWrite("configuration.display.changed", updatedConfig.RefreshPolicy.ToString());
+                return ApplyMode(updatedMode, state, updatedConfig, updatedPowerSnapshot);
+
             case AgentOperation.Restore:
             case AgentOperation.Shutdown:
                 RequireAdministrator();
@@ -202,7 +222,8 @@ internal sealed class AgentController
             powerSnapshot.SupplyType,
             powerSnapshot.BatteryPercent,
             powerSnapshot.AdapterLimitWatts,
-            deathAdder.ReadDevices());
+            deathAdder.ReadDevices(),
+            config.ToDisplayPolicySettings());
     }
 
     private AgentResponse ApplyMode(
