@@ -8,6 +8,7 @@ internal sealed class AgentController
     private readonly object gate = new();
     private readonly StateStore store = new();
     private readonly ConfigurationStore configurationStore = new();
+    private readonly AgentLog log = new();
     private readonly PowerPlanManager power = new();
     private readonly PowerSupplyProbe powerSupply = new();
     private readonly DisplayPolicy displays = new();
@@ -19,7 +20,11 @@ internal sealed class AgentController
         lock (gate)
         {
             try { return Task.FromResult(Handle(request)); }
-            catch (Exception ex) { return Task.FromResult(new AgentResponse(false, ex.Message)); }
+            catch (Exception ex)
+            {
+                _ = log.TryWrite($"request.{request.Operation}.failed", ex.Message);
+                return Task.FromResult(new AgentResponse(false, ex.Message));
+            }
         }
     }
 
@@ -37,6 +42,9 @@ internal sealed class AgentController
                 {
                     config.Selection = ModeSelection.Quiet;
                     configurationStore.Save(config);
+                    _ = log.TryWrite(
+                        "selection.latched",
+                        $"Balanced changed to Quiet below {config.BalancedBatteryThresholdPercent}% battery.");
                 }
                 var desiredMode = ModeSelector.Resolve(
                     config.Selection,
@@ -47,6 +55,7 @@ internal sealed class AgentController
             }
             catch (Exception ex)
             {
+                _ = log.TryWrite("selection.automatic.failed", ex.Message);
                 Console.Error.WriteLine($"Automatic mode application failed: {ex.Message}");
             }
         }
@@ -54,6 +63,7 @@ internal sealed class AgentController
 
     private AgentResponse Handle(AgentRequest request)
     {
+        if (request.Operation == AgentOperation.SelfTest) return RunSelfTest();
         var (state, config) = LoadContext();
         switch (request.Operation)
         {
@@ -77,6 +87,7 @@ internal sealed class AgentController
                         + $"current charge is {powerSnapshot.BatteryPercent?.ToString() ?? "unavailable"}%.");
                 config.Selection = selection;
                 configurationStore.Save(config);
+                _ = log.TryWrite("selection.changed", selection.ToString());
                 return ApplyMode(
                     ModeSelector.Resolve(selection, powerSnapshot, config.BalancedBatteryThresholdPercent),
                     state,
@@ -97,6 +108,7 @@ internal sealed class AgentController
                     var message = request.Operation == AgentOperation.Shutdown
                         ? "Restored captured Windows state; agent is shutting down."
                         : "Restored captured Windows state.";
+                    _ = log.TryWrite("state.restored", message);
                     return new AgentResponse(true, message, GetStatus(state, config));
                 }
                 catch
@@ -156,6 +168,7 @@ internal sealed class AgentController
             power.Apply(mode, state);
             displays.Apply(mode, state, config);
             state.ActiveMode = mode;
+            _ = log.TryWrite("mode.applied", mode.ToString());
             return new AgentResponse(true, $"Applied {mode} mode.", GetStatus(state, config, powerSnapshot));
         }
         finally { store.Save(state); }
@@ -163,9 +176,14 @@ internal sealed class AgentController
 
     private static void RequireAdministrator()
     {
-        using var identity = WindowsIdentity.GetCurrent();
-        if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
+        if (!IsAdministrator())
             throw new UnauthorizedAccessException("Applying or restoring Windows policies requires an elevated OpenSynapse.Agent.");
+    }
+
+    private static bool IsAdministrator()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
     }
 
     private (OpenSynapseState State, OpenSynapseConfig Config) LoadContext()
@@ -176,8 +194,121 @@ internal sealed class AgentController
         {
             state.LegacySelection = null;
             store.Save(state);
+            _ = log.TryWrite("configuration.migrated", "Moved mode selection from state schema to config schema.");
         }
         return (state, config);
+    }
+
+    private AgentResponse RunSelfTest()
+    {
+        var checks = new List<DiagnosticCheck>();
+        OpenSynapseState? state = null;
+        try
+        {
+            state = store.Load();
+            checks.Add(new DiagnosticCheck(
+                "Captured state",
+                DiagnosticStatus.Passed,
+                $"Schema {state.SchemaVersion} loaded."));
+            var hasRollback = state.ActiveMode is not null
+                || state.OriginalPowerPlan is not null
+                || state.OriginalBrightness is not null
+                || state.AdvancedColors.Count != 0
+                || state.DisplayScales.Count != 0;
+            checks.Add(new DiagnosticCheck(
+                "Rollback snapshot",
+                hasRollback ? DiagnosticStatus.Warning : DiagnosticStatus.Passed,
+                hasRollback ? "Captured rollback data is active or pending." : "No rollback is pending."));
+        }
+        catch (Exception ex)
+        {
+            checks.Add(new DiagnosticCheck("Captured state", DiagnosticStatus.Failed, ex.Message));
+        }
+
+        try
+        {
+            var config = configurationStore.Load(state?.LegacySelection);
+            checks.Add(new DiagnosticCheck(
+                "Configuration",
+                DiagnosticStatus.Passed,
+                $"Schema {config.SchemaVersion} loaded; selection is {config.Selection}."));
+        }
+        catch (Exception ex)
+        {
+            checks.Add(new DiagnosticCheck("Configuration", DiagnosticStatus.Failed, ex.Message));
+        }
+
+        var isAdministrator = IsAdministrator();
+        checks.Add(new DiagnosticCheck(
+            "Administrator",
+            isAdministrator ? DiagnosticStatus.Passed : DiagnosticStatus.Warning,
+            isAdministrator ? "Agent is elevated." : "Read-only checks work, but policy changes require elevation."));
+
+        try
+        {
+            checks.Add(new DiagnosticCheck(
+                "Power plan",
+                DiagnosticStatus.Passed,
+                $"Active plan is {power.GetActiveGuid()}."));
+        }
+        catch (Exception ex)
+        {
+            checks.Add(new DiagnosticCheck("Power plan", DiagnosticStatus.Failed, ex.Message));
+        }
+
+        try
+        {
+            var snapshot = powerSupply.GetSnapshot();
+            var ambiguous = snapshot.SupplyType is SupplyType.Unknown or SupplyType.UnknownAc;
+            checks.Add(new DiagnosticCheck(
+                "Power supply",
+                ambiguous ? DiagnosticStatus.Warning : DiagnosticStatus.Passed,
+                $"{snapshot.SupplyType}; battery {snapshot.BatteryPercent?.ToString() ?? "unavailable"}%; "
+                + $"adapter limit {snapshot.AdapterLimitWatts?.ToString("0.#") ?? "unavailable"} W."));
+        }
+        catch (Exception ex)
+        {
+            checks.Add(new DiagnosticCheck("Power supply", DiagnosticStatus.Failed, ex.Message));
+        }
+
+        try
+        {
+            var count = displays.GetActiveDisplayCount();
+            checks.Add(new DiagnosticCheck(
+                "Displays",
+                count == 0 ? DiagnosticStatus.Warning : DiagnosticStatus.Passed,
+                $"Detected {count} active display(s)."));
+        }
+        catch (Exception ex)
+        {
+            checks.Add(new DiagnosticCheck("Displays", DiagnosticStatus.Failed, ex.Message));
+        }
+
+        try
+        {
+            var count = deathAdder.ReadDevices().Count;
+            checks.Add(new DiagnosticCheck(
+                "Razer devices",
+                count == 0 ? DiagnosticStatus.Warning : DiagnosticStatus.Passed,
+                count == 0 ? "No supported Razer device detected." : $"Detected {count} supported device(s)."));
+        }
+        catch (Exception ex)
+        {
+            checks.Add(new DiagnosticCheck("Razer devices", DiagnosticStatus.Failed, ex.Message));
+        }
+
+        var logWritable = log.TryWrite("self-test", "Read-only diagnostics completed.");
+        checks.Add(new DiagnosticCheck(
+            "Local log",
+            logWritable ? DiagnosticStatus.Passed : DiagnosticStatus.Failed,
+            logWritable ? $"Writable at {log.FilePath}." : "Cannot write the local agent log."));
+
+        var failures = checks.Count(check => check.Status == DiagnosticStatus.Failed);
+        var warnings = checks.Count(check => check.Status == DiagnosticStatus.Warning);
+        return new AgentResponse(
+            failures == 0,
+            $"Self-test completed with {failures} failure(s) and {warnings} warning(s).",
+            Diagnostics: checks);
     }
 
     private static void EnsureBalancedEligible(

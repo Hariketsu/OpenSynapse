@@ -79,6 +79,7 @@ public static class ModeSelector
 public enum AgentOperation
 {
     Status,
+    SelfTest,
     Apply,
     SetSelection,
     Restore,
@@ -123,4 +124,17 @@ public sealed record AgentStatus(
 public sealed record AgentResponse(
     bool Success,
     string Message,
-    AgentStatus? Status = null);
+    AgentStatus? Status = null,
+    IReadOnlyList<DiagnosticCheck>? Diagnostics = null);
+
+public enum DiagnosticStatus
+{
+    Passed,
+    Warning,
+    Failed
+}
+
+public sealed record DiagnosticCheck(
+    string Name,
+    DiagnosticStatus Status,
+    string Message);

@@ -63,6 +63,7 @@
         <TextBox Grid.Row="3" x:Name="LogBox" Margin="0,14,0,0" IsReadOnly="True" TextWrapping="Wrap"
                  VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="12"/>
         <StackPanel Grid.Row="4" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button Content="Run self-test" Click="SelfTest_Click"/>
             <Button Content="Restore captured state and exit" Click="Exit_Click"/>
         </StackPanel>
     </Grid>

@@ -53,6 +53,9 @@ function Assert-Restored {
 }
 
 try {
+    $selfTest = Invoke-Agent self-test
+    if (-not $selfTest.Success) { throw $selfTest.Message }
+
     $status = Invoke-Agent status
     if (-not $status.Success) { throw $status.Message }
 

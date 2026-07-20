@@ -51,6 +51,8 @@ public partial class MainWindow : Window
     private async void Balanced_Click(object sender, RoutedEventArgs e) => await SelectAsync(ModeSelection.Balanced);
     private async void Quiet_Click(object sender, RoutedEventArgs e) => await SelectAsync(ModeSelection.Quiet);
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
+    private async void SelfTest_Click(object sender, RoutedEventArgs e) =>
+        await SendAsync(new AgentRequest(AgentOperation.SelfTest));
 
     private async void ApplyDpi_Click(object sender, RoutedEventArgs e)
     {
@@ -80,6 +82,8 @@ public partial class MainWindow : Window
         {
             var response = await agent.SendAsync(request);
             Log(response.Message);
+            foreach (var diagnostic in response.Diagnostics ?? [])
+                Log($"{diagnostic.Status}: {diagnostic.Name} — {diagnostic.Message}");
             if (response.Status is not null) UpdateStatus(response.Status);
             return response.Success;
         }

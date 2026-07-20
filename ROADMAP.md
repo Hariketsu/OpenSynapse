@@ -24,7 +24,7 @@ The roadmap describes validation gates, not delivery dates. A capability moves f
 
 - Windows installation, elevation, startup, single-instance, and uninstall lifecycle.
 - Removal of OpenSynapse-managed power plans during uninstall.
-- Versioned state schema and durable diagnostic logs.
+- Versioned configuration/state schemas, bounded diagnostic logs, and read-only self-test (implemented; target-Windows validation ongoing).
 - A documented elevated-agent threat model.
 - Repeatable Windows integration tests and a maintained compatibility matrix.
 - Signed or checksummed preview artifacts with a changelog.

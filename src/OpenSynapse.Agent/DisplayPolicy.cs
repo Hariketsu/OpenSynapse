@@ -15,6 +15,8 @@ internal sealed class DisplayPolicy
         this.displaySystem = displaySystem;
     }
 
+    public int GetActiveDisplayCount() => displaySystem.GetDisplays().Count;
+
     public void Capture(OperatingMode mode, OpenSynapseState state)
     {
         CaptureDisplayScales(state);

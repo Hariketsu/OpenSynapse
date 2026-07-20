@@ -18,6 +18,7 @@ if (args.Length == 0 || args[0].Equals("serve", StringComparison.OrdinalIgnoreCa
 var request = args[0].ToLowerInvariant() switch
 {
     "status" => new AgentRequest(AgentOperation.Status),
+    "self-test" => new AgentRequest(AgentOperation.SelfTest),
     "devices" => new AgentRequest(AgentOperation.ListDevices),
     "restore" => new AgentRequest(AgentOperation.Restore),
     "apply" when args.Length == 2
@@ -29,7 +30,7 @@ var request = args[0].ToLowerInvariant() switch
     "mouse-polling" when args.Length == 2 && int.TryParse(args[1], out var polling)
         => new AgentRequest(AgentOperation.SetMousePollingRate, PollingRate: polling),
     _ => throw new ArgumentException(
-        "Usage: OpenSynapse.Agent [serve|status|devices|apply <Performance|Balanced|Quiet>|restore|mouse-dpi <100..30000>|mouse-polling <125|500|1000>]")
+        "Usage: OpenSynapse.Agent [serve|status|self-test|devices|apply <Performance|Balanced|Quiet>|restore|mouse-dpi <100..30000>|mouse-polling <125|500|1000>]")
 };
 
 var response = await controller.HandleAsync(request);

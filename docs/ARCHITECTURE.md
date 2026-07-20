@@ -13,6 +13,7 @@ flowchart LR
     Agent["OpenSynapse.Agent\nelevated policy and HID owner"]
     Config["config.json\nversioned user policy"]
     State["state.json\nversioned captured rollback"]
+    Log["logs\\agent.log\nbounded local diagnostics"]
     Windows["Windows APIs and powercfg"]
     Supply["Windows power status and read-only nvidia-smi"]
     HID["Supported Razer HID control interface"]
@@ -22,6 +23,7 @@ flowchart LR
     Agent --> Core
     Agent --> Config
     Agent --> State
+    Agent --> Log
     Agent --> Windows
     Agent --> Supply
     Agent --> HID
@@ -33,7 +35,7 @@ Runs without elevation. It displays status and sends typed requests to the agent
 
 ### OpenSynapse.Agent
 
-Runs elevated for the current user. It owns mode selection, power-source reactions, state capture, restoration, Windows policy changes, device enumeration, and HID commands. The named pipe accepts only the current user and one bounded JSON request per connection.
+Runs elevated for the current user. It owns mode selection, power-source reactions, state capture, restoration, Windows policy changes, device enumeration, HID commands, bounded local logs, and read-only diagnostics. The named pipe accepts only the current user and one bounded JSON request per connection.
 
 ### OpenSynapse.Core
 

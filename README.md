@@ -74,6 +74,12 @@ dotnet run --project src/OpenSynapse.Agent -- serve
 dotnet run --project src/OpenSynapse.App
 ```
 
+Run read-only diagnostics from any terminal:
+
+```powershell
+dotnet run --project src/OpenSynapse.Agent -- self-test
+```
+
 On a disposable or fully understood Windows configuration, run the reversible elevated smoke test:
 
 ```powershell
@@ -96,6 +102,7 @@ The agent creates `%LOCALAPPDATA%\OpenSynapse\config.json` with a versioned sche
 - Responses must match the request transaction, command class, command ID, and checksum.
 - Privileged IPC is restricted to the current Windows user.
 - Configuration and captured system state are stored separately and atomically under `%LOCALAPPDATA%\OpenSynapse`.
+- Agent events are written locally to a bounded `logs\agent.log` with one rotated backup.
 - Adapter classification invokes `nvidia-smi` with a read-only query and fails safe to Quiet when the power limit cannot be verified.
 - The current implementation contains no telemetry, analytics, updater, account system, or runtime network client.
 
