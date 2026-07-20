@@ -11,7 +11,8 @@ flowchart LR
     UI["OpenSynapse.App\nWPF UI and tray"]
     Core["OpenSynapse.Core\nrequests, status, policy and protocol"]
     Agent["OpenSynapse.Agent\nelevated policy and HID owner"]
-    State["%LOCALAPPDATA%\\OpenSynapse\nversioned captured state"]
+    Config["config.json\nversioned user policy"]
+    State["state.json\nversioned captured rollback"]
     Windows["Windows APIs and powercfg"]
     Supply["Windows power status and read-only nvidia-smi"]
     HID["Supported Razer HID control interface"]
@@ -19,6 +20,7 @@ flowchart LR
     UI --> Core
     UI -- "current-user named pipe" --> Agent
     Agent --> Core
+    Agent --> Config
     Agent --> State
     Agent --> Windows
     Agent --> Supply
@@ -64,7 +66,7 @@ The Captured State is not deleted merely because a restore was attempted. Each v
 ## Trust boundaries
 
 - The UI-to-agent pipe crosses a Windows integrity boundary. Access is restricted to the current user; JSON enums, sizes, ranges, operations, and device identities are validated.
-- The state file is current-user writable and is not a source of arbitrary executable commands or file paths.
+- The configuration and state files are current-user writable and are not sources of arbitrary executable commands or file paths. They use independent schemas so user policy cannot erase rollback evidence.
 - Automatic Performance requires a high-power AC classification. Adapter probing is read-only, cached, and falls back to Quiet when unavailable or ambiguous.
 - HID writes require Razer VID `1532`, an explicitly supported PID, and Consumer usage page `0x0C`.
 - Unknown status, response mismatch, checksum failure, and unsupported values fail closed.

@@ -48,7 +48,7 @@ public sealed class DisplayPolicyTests
         };
         var policy = new DisplayPolicy(displaySystem);
 
-        policy.Apply(OperatingMode.Performance, state);
+        policy.Apply(OperatingMode.Performance, state, new OpenSynapseConfig());
 
         Assert.AreEqual(82, displaySystem.Brightness);
         Assert.IsTrue(displaySystem.Colors["hdr"].Enabled);
@@ -72,13 +72,20 @@ public sealed class DisplayPolicyTests
         displaySystem.Colors["hdr"] = (true, true);
         var state = new OpenSynapseState();
         var policy = new DisplayPolicy(displaySystem);
+        var config = new OpenSynapseConfig
+        {
+            BalancedBrightnessPercent = 65,
+            BalancedRefreshRateHz = 144,
+            InternalDisplayScalePercent = 175
+        };
 
         policy.Capture(OperatingMode.Balanced, state);
-        policy.Apply(OperatingMode.Balanced, state);
+        policy.Apply(OperatingMode.Balanced, state, config);
 
-        Assert.AreEqual(60, displaySystem.Brightness);
+        Assert.AreEqual(65, displaySystem.Brightness);
         Assert.IsFalse(displaySystem.Colors["hdr"].Enabled);
-        CollectionAssert.AreEqual(new[] { 120 }, displaySystem.FixedRefreshApplications);
+        CollectionAssert.AreEqual(new[] { 144 }, displaySystem.FixedRefreshApplications);
+        CollectionAssert.AreEqual(new[] { ("internal", 175) }, displaySystem.ScaleWrites);
     }
 
     [TestMethod]

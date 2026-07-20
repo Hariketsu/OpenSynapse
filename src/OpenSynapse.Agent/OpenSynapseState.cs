@@ -1,14 +1,17 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using OpenSynapse.Core;
 
 namespace OpenSynapse.Agent;
 
 internal sealed class OpenSynapseState
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
-    public ModeSelection Selection { get; set; } = ModeSelection.Auto;
+    [JsonPropertyName("selection")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public ModeSelection? LegacySelection { get; set; }
     public string? OriginalPowerPlan { get; set; }
     public string? PerformancePowerPlan { get; set; }
     public string? BalancedPowerPlan { get; set; }
@@ -49,9 +52,9 @@ internal sealed class StateStore
             state.DisplayScales ??= [];
             return state;
         }
-        catch (JsonException)
+        catch (JsonException ex)
         {
-            return new OpenSynapseState();
+            throw new InvalidDataException("Captured state is not valid JSON and was not overwritten.", ex);
         }
     }
 

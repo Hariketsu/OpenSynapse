@@ -40,15 +40,29 @@ internal sealed class DisplayPolicy
         }
     }
 
-    public void Apply(OperatingMode mode, OpenSynapseState state)
+    public void Apply(OperatingMode mode, OpenSynapseState state, OpenSynapseConfig config)
     {
         if (mode != OperatingMode.Performance)
         {
             CaptureForLowPower(state);
             foreach (var color in state.AdvancedColors)
                 try { displaySystem.SetAdvancedColor(color.Key, false); } catch { }
-            try { displaySystem.SetBrightness(mode == OperatingMode.Balanced ? 60 : 40); } catch { }
-            try { displaySystem.ApplyFixedRefresh(mode == OperatingMode.Balanced ? 120 : 60); } catch { }
+            try
+            {
+                displaySystem.SetBrightness(
+                    mode == OperatingMode.Balanced
+                        ? config.BalancedBrightnessPercent
+                        : config.QuietBrightnessPercent);
+            }
+            catch { }
+            try
+            {
+                displaySystem.ApplyFixedRefresh(
+                    mode == OperatingMode.Balanced
+                        ? config.BalancedRefreshRateHz
+                        : config.QuietRefreshRateHz);
+            }
+            catch { }
         }
         else
         {
@@ -59,7 +73,15 @@ internal sealed class DisplayPolicy
         try
         {
             foreach (var display in displaySystem.GetDisplays())
-                try { displaySystem.SetDisplayScale(display.Key, display.IsInternal ? 150 : 125); } catch { }
+                try
+                {
+                    displaySystem.SetDisplayScale(
+                        display.Key,
+                        display.IsInternal
+                            ? config.InternalDisplayScalePercent
+                            : config.ExternalDisplayScalePercent);
+                }
+                catch { }
         }
         catch { }
     }

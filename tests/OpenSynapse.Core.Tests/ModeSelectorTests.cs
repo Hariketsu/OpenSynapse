@@ -37,4 +37,13 @@ public sealed class ModeSelectorTests
         Assert.AreEqual(expected, ModeSelector.Resolve(ModeSelection.Balanced, snapshot));
         Assert.AreEqual(expected == OperatingMode.Balanced, ModeSelector.IsBalancedEligible(snapshot));
     }
+
+    [TestMethod]
+    public void BalancedUsesConfiguredBatteryThreshold()
+    {
+        var snapshot = new PowerSnapshot(PowerSource.Battery, SupplyType.Battery, 54);
+
+        Assert.AreEqual(OperatingMode.Quiet, ModeSelector.Resolve(ModeSelection.Balanced, snapshot, 55));
+        Assert.AreEqual(OperatingMode.Balanced, ModeSelector.Resolve(ModeSelection.Balanced, snapshot, 54));
+    }
 }

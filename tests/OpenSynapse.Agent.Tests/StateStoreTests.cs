@@ -48,6 +48,16 @@ public sealed class StateStoreTests
     }
 
     [TestMethod]
+    public void LoadRejectsMalformedCapturedStateWithoutOverwritingIt()
+    {
+        const string malformed = "{not-json";
+        File.WriteAllText(statePath, malformed);
+
+        Assert.ThrowsExactly<InvalidDataException>(() => new StateStore(statePath).Load());
+        Assert.AreEqual(malformed, File.ReadAllText(statePath));
+    }
+
+    [TestMethod]
     public void SaveWritesTheCurrentSchemaVersion()
     {
         var state = new OpenSynapseState { SchemaVersion = 0 };
@@ -65,7 +75,6 @@ public sealed class StateStoreTests
     {
         var expected = new OpenSynapseState
         {
-            Selection = ModeSelection.Balanced,
             ActiveMode = OperatingMode.Balanced,
             BalancedPowerPlan = "11111111-2222-3333-4444-555555555555"
         };
@@ -74,7 +83,6 @@ public sealed class StateStoreTests
         store.Save(expected);
         var actual = store.Load();
 
-        Assert.AreEqual(ModeSelection.Balanced, actual.Selection);
         Assert.AreEqual(OperatingMode.Balanced, actual.ActiveMode);
         Assert.AreEqual(expected.BalancedPowerPlan, actual.BalancedPowerPlan);
     }

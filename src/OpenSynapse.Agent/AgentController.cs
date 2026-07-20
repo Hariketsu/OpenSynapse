@@ -7,6 +7,7 @@ internal sealed class AgentController
 {
     private readonly object gate = new();
     private readonly StateStore store = new();
+    private readonly ConfigurationStore configurationStore = new();
     private readonly PowerPlanManager power = new();
     private readonly PowerSupplyProbe powerSupply = new();
     private readonly DisplayPolicy displays = new();
@@ -29,16 +30,20 @@ internal sealed class AgentController
             if (shuttingDown) return;
             try
             {
-                var state = store.Load();
+                var (state, config) = LoadContext();
                 var powerSnapshot = powerSupply.GetSnapshot();
-                if (state.Selection == ModeSelection.Balanced && !ModeSelector.IsBalancedEligible(powerSnapshot))
+                if (config.Selection == ModeSelection.Balanced
+                    && !ModeSelector.IsBalancedEligible(powerSnapshot, config.BalancedBatteryThresholdPercent))
                 {
-                    state.Selection = ModeSelection.Quiet;
-                    store.Save(state);
+                    config.Selection = ModeSelection.Quiet;
+                    configurationStore.Save(config);
                 }
-                var desiredMode = ModeSelector.Resolve(state.Selection, powerSnapshot);
+                var desiredMode = ModeSelector.Resolve(
+                    config.Selection,
+                    powerSnapshot,
+                    config.BalancedBatteryThresholdPercent);
                 if (!force && state.ActiveMode == desiredMode) return;
-                ApplyMode(desiredMode, state, powerSnapshot);
+                ApplyMode(desiredMode, state, config, powerSnapshot);
             }
             catch (Exception ex)
             {
@@ -49,29 +54,34 @@ internal sealed class AgentController
 
     private AgentResponse Handle(AgentRequest request)
     {
-        var state = store.Load();
+        var (state, config) = LoadContext();
         switch (request.Operation)
         {
             case AgentOperation.Status:
             case AgentOperation.ListDevices:
-                return new AgentResponse(true, "OK", GetStatus(state));
+                return new AgentResponse(true, "OK", GetStatus(state, config));
 
             case AgentOperation.Apply:
                 var mode = request.Mode ?? throw new ArgumentException("Mode is required.");
                 var applyPowerSnapshot = powerSupply.GetSnapshot();
-                EnsureBalancedEligible(mode, applyPowerSnapshot);
-                return ApplyMode(mode, state, applyPowerSnapshot);
+                EnsureBalancedEligible(mode, applyPowerSnapshot, config);
+                return ApplyMode(mode, state, config, applyPowerSnapshot);
 
             case AgentOperation.SetSelection:
                 var selection = request.Selection ?? throw new ArgumentException("Selection is required.");
                 var powerSnapshot = powerSupply.GetSnapshot();
-                if (selection == ModeSelection.Balanced && !ModeSelector.IsBalancedEligible(powerSnapshot))
+                if (selection == ModeSelection.Balanced
+                    && !ModeSelector.IsBalancedEligible(powerSnapshot, config.BalancedBatteryThresholdPercent))
                     throw new InvalidOperationException(
-                        $"Balanced mode requires at least {ModeSelector.BalancedBatteryThresholdPercent}% battery; "
+                        $"Balanced mode requires at least {config.BalancedBatteryThresholdPercent}% battery; "
                         + $"current charge is {powerSnapshot.BatteryPercent?.ToString() ?? "unavailable"}%.");
-                state.Selection = selection;
-                store.Save(state);
-                return ApplyMode(ModeSelector.Resolve(state.Selection, powerSnapshot), state, powerSnapshot);
+                config.Selection = selection;
+                configurationStore.Save(config);
+                return ApplyMode(
+                    ModeSelector.Resolve(selection, powerSnapshot, config.BalancedBatteryThresholdPercent),
+                    state,
+                    config,
+                    powerSnapshot);
 
             case AgentOperation.Restore:
             case AgentOperation.Shutdown:
@@ -87,7 +97,7 @@ internal sealed class AgentController
                     var message = request.Operation == AgentOperation.Shutdown
                         ? "Restored captured Windows state; agent is shutting down."
                         : "Restored captured Windows state.";
-                    return new AgentResponse(true, message, GetStatus(state));
+                    return new AgentResponse(true, message, GetStatus(state, config));
                 }
                 catch
                 {
@@ -101,26 +111,29 @@ internal sealed class AgentController
                     request.DpiX ?? throw new ArgumentException("DpiX is required."),
                     request.DpiY ?? request.DpiX.Value,
                     request.ProductId);
-                return new AgentResponse(true, "DeathAdder DPI updated.", GetStatus(state));
+                return new AgentResponse(true, "DeathAdder DPI updated.", GetStatus(state, config));
 
             case AgentOperation.SetMousePollingRate:
                 deathAdder.SetPollingRate(
                     request.PollingRate ?? throw new ArgumentException("PollingRate is required."),
                     request.ProductId);
-                return new AgentResponse(true, "DeathAdder polling rate updated.", GetStatus(state));
+                return new AgentResponse(true, "DeathAdder polling rate updated.", GetStatus(state, config));
 
             default:
                 throw new ArgumentOutOfRangeException(nameof(request.Operation));
         }
     }
 
-    private AgentStatus GetStatus(OpenSynapseState state, PowerSnapshot? powerSnapshot = null)
+    private AgentStatus GetStatus(
+        OpenSynapseState state,
+        OpenSynapseConfig config,
+        PowerSnapshot? powerSnapshot = null)
     {
         powerSnapshot ??= powerSupply.GetSnapshot();
         return new AgentStatus(
             power.GetActiveGuid(),
             state.ActiveMode,
-            state.Selection,
+            config.Selection,
             powerSnapshot.Source,
             powerSnapshot.SupplyType,
             powerSnapshot.BatteryPercent,
@@ -131,6 +144,7 @@ internal sealed class AgentController
     private AgentResponse ApplyMode(
         OperatingMode mode,
         OpenSynapseState state,
+        OpenSynapseConfig config,
         PowerSnapshot? powerSnapshot = null)
     {
         RequireAdministrator();
@@ -140,9 +154,9 @@ internal sealed class AgentController
             displays.Capture(mode, state);
             store.Save(state);
             power.Apply(mode, state);
-            displays.Apply(mode, state);
+            displays.Apply(mode, state, config);
             state.ActiveMode = mode;
-            return new AgentResponse(true, $"Applied {mode} mode.", GetStatus(state, powerSnapshot));
+            return new AgentResponse(true, $"Applied {mode} mode.", GetStatus(state, config, powerSnapshot));
         }
         finally { store.Save(state); }
     }
@@ -154,11 +168,27 @@ internal sealed class AgentController
             throw new UnauthorizedAccessException("Applying or restoring Windows policies requires an elevated OpenSynapse.Agent.");
     }
 
-    private static void EnsureBalancedEligible(OperatingMode mode, PowerSnapshot powerSnapshot)
+    private (OpenSynapseState State, OpenSynapseConfig Config) LoadContext()
     {
-        if (mode != OperatingMode.Balanced || ModeSelector.IsBalancedEligible(powerSnapshot)) return;
+        var state = store.Load();
+        var config = configurationStore.Load(state.LegacySelection);
+        if (state.LegacySelection is not null)
+        {
+            state.LegacySelection = null;
+            store.Save(state);
+        }
+        return (state, config);
+    }
+
+    private static void EnsureBalancedEligible(
+        OperatingMode mode,
+        PowerSnapshot powerSnapshot,
+        OpenSynapseConfig config)
+    {
+        if (mode != OperatingMode.Balanced
+            || ModeSelector.IsBalancedEligible(powerSnapshot, config.BalancedBatteryThresholdPercent)) return;
         throw new InvalidOperationException(
-            $"Balanced mode requires at least {ModeSelector.BalancedBatteryThresholdPercent}% battery; "
+            $"Balanced mode requires at least {config.BalancedBatteryThresholdPercent}% battery; "
             + $"current charge is {powerSnapshot.BatteryPercent?.ToString() ?? "unavailable"}%.");
     }
 }

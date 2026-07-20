@@ -85,13 +85,17 @@ powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1 -TestMouseW
 
 The script verifies Performance/Balanced/Quiet application (Balanced when battery is at least 50%), named-pipe lifecycle, agent shutdown, power-plan rollback, and captured-state cleanup. The mouse option requires a readable DeathAdder V3 Pro and does not intentionally select new values.
 
+## Configuration
+
+The agent creates `%LOCALAPPDATA%\OpenSynapse\config.json` with a versioned schema. It stores the selected mode, the Balanced battery threshold, internal/external display scaling, Balanced/Quiet brightness, and fixed refresh targets. Invalid or newer configuration is rejected without overwriting the file. Captured rollback data remains separate in `state.json`.
+
 ## Safety and privacy
 
 - Razer writes require an exact supported VID/PID and Consumer HID usage page.
 - DPI and polling inputs are validated before packet construction.
 - Responses must match the request transaction, command class, command ID, and checksum.
 - Privileged IPC is restricted to the current Windows user.
-- Captured system state is stored atomically under `%LOCALAPPDATA%\OpenSynapse`.
+- Configuration and captured system state are stored separately and atomically under `%LOCALAPPDATA%\OpenSynapse`.
 - Adapter classification invokes `nvidia-smi` with a read-only query and fails safe to Quiet when the power limit cannot be verified.
 - The current implementation contains no telemetry, analytics, updater, account system, or runtime network client.
 

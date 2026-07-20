@@ -57,18 +57,23 @@ public static class ModeSelector
 {
     public const int BalancedBatteryThresholdPercent = 50;
 
-    public static bool IsBalancedEligible(PowerSnapshot power) =>
-        power.BatteryPercent >= BalancedBatteryThresholdPercent;
+    public static bool IsBalancedEligible(
+        PowerSnapshot power,
+        int batteryThresholdPercent = BalancedBatteryThresholdPercent) =>
+        power.BatteryPercent >= batteryThresholdPercent;
 
-    public static OperatingMode Resolve(ModeSelection selection, PowerSnapshot power) => selection switch
-    {
-        ModeSelection.Performance => OperatingMode.Performance,
-        ModeSelection.Balanced when IsBalancedEligible(power) => OperatingMode.Balanced,
-        ModeSelection.Balanced => OperatingMode.Quiet,
-        ModeSelection.Quiet => OperatingMode.Quiet,
-        _ when power.SupplyType == SupplyType.HighPowerAc => OperatingMode.Performance,
-        _ => OperatingMode.Quiet
-    };
+    public static OperatingMode Resolve(
+        ModeSelection selection,
+        PowerSnapshot power,
+        int balancedBatteryThresholdPercent = BalancedBatteryThresholdPercent) => selection switch
+        {
+            ModeSelection.Performance => OperatingMode.Performance,
+            ModeSelection.Balanced when IsBalancedEligible(power, balancedBatteryThresholdPercent) => OperatingMode.Balanced,
+            ModeSelection.Balanced => OperatingMode.Quiet,
+            ModeSelection.Quiet => OperatingMode.Quiet,
+            _ when power.SupplyType == SupplyType.HighPowerAc => OperatingMode.Performance,
+            _ => OperatingMode.Quiet
+        };
 }
 
 public enum AgentOperation
