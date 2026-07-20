@@ -20,13 +20,44 @@ public enum PowerSource
     Battery
 }
 
+public enum SupplyType
+{
+    Unknown,
+    HighPowerAc,
+    LowPowerPd,
+    UnknownAc,
+    Battery
+}
+
+public sealed record PowerSnapshot(
+    PowerSource Source,
+    SupplyType SupplyType,
+    int? BatteryPercent = null,
+    double? AdapterLimitWatts = null);
+
+public static class SupplyClassifier
+{
+    public const double HighPowerAdapterThresholdWatts = 130;
+    public const double LowPowerAdapterThresholdWatts = 100;
+
+    public static SupplyType Resolve(PowerSource source, double? adapterLimitWatts) => source switch
+    {
+        PowerSource.Battery => SupplyType.Battery,
+        PowerSource.Unknown => SupplyType.Unknown,
+        _ when adapterLimitWatts is null || !double.IsFinite(adapterLimitWatts.Value) => SupplyType.UnknownAc,
+        _ when adapterLimitWatts >= HighPowerAdapterThresholdWatts => SupplyType.HighPowerAc,
+        _ when adapterLimitWatts <= LowPowerAdapterThresholdWatts => SupplyType.LowPowerPd,
+        _ => SupplyType.UnknownAc
+    };
+}
+
 public static class ModeSelector
 {
-    public static OperatingMode Resolve(ModeSelection selection, PowerSource source) => selection switch
+    public static OperatingMode Resolve(ModeSelection selection, PowerSnapshot power) => selection switch
     {
         ModeSelection.Performance => OperatingMode.Performance,
         ModeSelection.Quiet => OperatingMode.Quiet,
-        _ when source == PowerSource.Ac => OperatingMode.Performance,
+        _ when power.SupplyType == SupplyType.HighPowerAc => OperatingMode.Performance,
         _ => OperatingMode.Quiet
     };
 }
@@ -70,6 +101,9 @@ public sealed record AgentStatus(
     OperatingMode? ActiveMode,
     ModeSelection Selection,
     PowerSource PowerSource,
+    SupplyType SupplyType,
+    int? BatteryPercent,
+    double? AdapterLimitWatts,
     IReadOnlyList<RazerDevice> RazerDevices);
 
 public sealed record AgentResponse(

@@ -8,6 +8,7 @@ internal sealed class AgentController
     private readonly object gate = new();
     private readonly StateStore store = new();
     private readonly PowerPlanManager power = new();
+    private readonly PowerSupplyProbe powerSupply = new();
     private readonly DisplayPolicy displays = new();
     private readonly DeathAdderHid deathAdder = new();
     private bool shuttingDown;
@@ -29,7 +30,8 @@ internal sealed class AgentController
             try
             {
                 var state = store.Load();
-                ApplyMode(ModeSelector.Resolve(state.Selection, GetPowerSource()), state);
+                var powerSnapshot = powerSupply.GetSnapshot();
+                ApplyMode(ModeSelector.Resolve(state.Selection, powerSnapshot), state, powerSnapshot);
             }
             catch (Exception ex)
             {
@@ -53,7 +55,8 @@ internal sealed class AgentController
             case AgentOperation.SetSelection:
                 state.Selection = request.Selection ?? throw new ArgumentException("Selection is required.");
                 store.Save(state);
-                return ApplyMode(ModeSelector.Resolve(state.Selection, GetPowerSource()), state);
+                var powerSnapshot = powerSupply.GetSnapshot();
+                return ApplyMode(ModeSelector.Resolve(state.Selection, powerSnapshot), state, powerSnapshot);
 
             case AgentOperation.Restore:
             case AgentOperation.Shutdown:
@@ -96,14 +99,24 @@ internal sealed class AgentController
         }
     }
 
-    private AgentStatus GetStatus(OpenSynapseState state) => new(
-        power.GetActiveGuid(),
-        state.ActiveMode,
-        state.Selection,
-        GetPowerSource(),
-        deathAdder.ReadDevices());
+    private AgentStatus GetStatus(OpenSynapseState state, PowerSnapshot? powerSnapshot = null)
+    {
+        powerSnapshot ??= powerSupply.GetSnapshot();
+        return new AgentStatus(
+            power.GetActiveGuid(),
+            state.ActiveMode,
+            state.Selection,
+            powerSnapshot.Source,
+            powerSnapshot.SupplyType,
+            powerSnapshot.BatteryPercent,
+            powerSnapshot.AdapterLimitWatts,
+            deathAdder.ReadDevices());
+    }
 
-    private AgentResponse ApplyMode(OperatingMode mode, OpenSynapseState state)
+    private AgentResponse ApplyMode(
+        OperatingMode mode,
+        OpenSynapseState state,
+        PowerSnapshot? powerSnapshot = null)
     {
         RequireAdministrator();
         try
@@ -114,17 +127,10 @@ internal sealed class AgentController
             power.Apply(mode, state);
             displays.Apply(mode, state);
             state.ActiveMode = mode;
-            return new AgentResponse(true, $"Applied {mode} mode.", GetStatus(state));
+            return new AgentResponse(true, $"Applied {mode} mode.", GetStatus(state, powerSnapshot));
         }
         finally { store.Save(state); }
     }
-
-    private static PowerSource GetPowerSource() => System.Windows.Forms.SystemInformation.PowerStatus.PowerLineStatus switch
-    {
-        System.Windows.Forms.PowerLineStatus.Online => PowerSource.Ac,
-        System.Windows.Forms.PowerLineStatus.Offline => PowerSource.Battery,
-        _ => PowerSource.Unknown
-    };
 
     private static void RequireAdministrator()
     {

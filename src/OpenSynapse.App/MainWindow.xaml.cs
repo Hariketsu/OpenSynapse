@@ -97,7 +97,10 @@ public partial class MainWindow : Window
     private void UpdateStatus(AgentStatus status)
     {
         selection = status.Selection;
-        ModeText.Text = $"Selection: {status.Selection}   Power: {status.PowerSource}   Active: {status.ActiveMode?.ToString() ?? "unmanaged"}";
+        var battery = status.BatteryPercent is int percent ? $" / {percent}%" : string.Empty;
+        var adapterLimit = status.AdapterLimitWatts is double watts ? $" / {watts:0.#} W GPU limit" : string.Empty;
+        PowerText.Text = $"Power: {GetSupplyDisplayName(status.SupplyType)}{battery}{adapterLimit}";
+        ModeText.Text = $"Selection: {status.Selection}   Active: {status.ActiveMode?.ToString() ?? "unmanaged"}";
         var mouse = status.RazerDevices.FirstOrDefault();
         MouseText.Text = mouse is null
             ? "No supported mouse detected. Supported PIDs: 00B6, 00B7, 00C2, 00C3."
@@ -107,6 +110,15 @@ public partial class MainWindow : Window
     }
 
     private void UpdatePowerText() => PowerText.Text = $"Power: {GetPowerSource()}";
+
+    private static string GetSupplyDisplayName(SupplyType supplyType) => supplyType switch
+    {
+        SupplyType.HighPowerAc => "verified high-power AC",
+        SupplyType.LowPowerPd => "USB-C PD / low-power AC",
+        SupplyType.UnknownAc => "AC (unverified)",
+        SupplyType.Battery => "battery",
+        _ => "unknown"
+    };
 
     private static PowerSource GetPowerSource() => GetSystemPowerStatus(out var status)
         ? status.ACLineStatus switch { 1 => PowerSource.Ac, 0 => PowerSource.Battery, _ => PowerSource.Unknown }

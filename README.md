@@ -23,7 +23,7 @@ OpenSynapse currently implements the M0–M3 development slice. Implementation d
 
 | Area | Current capability | Maturity |
 | --- | --- | --- |
-| Windows policies | Auto, Performance, and Quiet selection; power plans; refresh rate; Advanced Color/HDR; internal brightness; display scaling | Implemented, target-Windows validation pending |
+| Windows policies | Adapter-aware Auto, Performance, and Quiet selection; power plans; refresh rate; Advanced Color/HDR; internal brightness; display scaling | Implemented, target-Windows validation pending |
 | State restoration | Atomic captured state and verified power-plan rollback | Implemented, target-Windows validation pending |
 | Desktop control | Non-elevated WPF panel and tray UI connected to a per-user elevated agent | Implemented, target-Windows validation pending |
 | Razer mouse | Discovery, status, DPI, and standard-receiver polling control | Experimental |
@@ -63,8 +63,8 @@ Requirements:
 
 ```powershell
 dotnet restore OpenSynapse.sln
-dotnet build OpenSynapse.sln --no-restore
-dotnet test tests/OpenSynapse.Core.Tests/OpenSynapse.Core.Tests.csproj --no-build
+dotnet build OpenSynapse.sln --configuration Release --no-restore
+dotnet test OpenSynapse.sln --configuration Release --no-build --no-restore
 ```
 
 Start the elevated agent, then launch the UI from a normal terminal:
@@ -92,6 +92,7 @@ The script verifies Performance/Quiet application, named-pipe lifecycle, agent s
 - Responses must match the request transaction, command class, command ID, and checksum.
 - Privileged IPC is restricted to the current Windows user.
 - Captured system state is stored atomically under `%LOCALAPPDATA%\OpenSynapse`.
+- Adapter classification invokes `nvidia-smi` with a read-only query and fails safe to Quiet when the power limit cannot be verified.
 - The current implementation contains no telemetry, analytics, updater, account system, or runtime network client.
 
 Please report security issues through the private process in [SECURITY.md](SECURITY.md), not a public issue.

@@ -11,8 +11,9 @@ flowchart LR
     UI["OpenSynapse.App\nWPF UI and tray"]
     Core["OpenSynapse.Core\nrequests, status, policy and protocol"]
     Agent["OpenSynapse.Agent\nelevated policy and HID owner"]
-    State["%LOCALAPPDATA%\\OpenSynapse\nversionless experimental state"]
+    State["%LOCALAPPDATA%\\OpenSynapse\nversioned captured state"]
     Windows["Windows APIs and powercfg"]
+    Supply["Windows power status and read-only nvidia-smi"]
     HID["Supported Razer HID control interface"]
 
     UI --> Core
@@ -20,6 +21,7 @@ flowchart LR
     Agent --> Core
     Agent --> State
     Agent --> Windows
+    Agent --> Supply
     Agent --> HID
 ```
 
@@ -33,7 +35,7 @@ Runs elevated for the current user. It owns mode selection, power-source reactio
 
 ### OpenSynapse.Core
 
-Contains shared request/status models, deterministic mode selection, and device packet construction/validation. Logic that can be independent of Windows or hardware belongs here and leaves a runnable test.
+Contains shared request/status models, fail-safe supply classification, deterministic mode selection, and device packet construction/validation. Logic that can be independent of Windows or hardware belongs here and leaves a runnable test.
 
 ## State transition
 
@@ -57,6 +59,7 @@ The Captured State is not deleted merely because a restore was attempted. Each v
 
 - The UI-to-agent pipe crosses a Windows integrity boundary. Access is restricted to the current user; JSON enums, sizes, ranges, operations, and device identities are validated.
 - The state file is current-user writable and is not a source of arbitrary executable commands or file paths.
+- Automatic Performance requires a high-power AC classification. Adapter probing is read-only, cached, and falls back to Quiet when unavailable or ambiguous.
 - HID writes require Razer VID `1532`, an explicitly supported PID, and Consumer usage page `0x0C`.
 - Unknown status, response mismatch, checksum failure, and unsupported values fail closed.
 - Firmware and embedded-controller writes are outside the boundary.
