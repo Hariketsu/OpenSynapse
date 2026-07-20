@@ -529,7 +529,11 @@ namespace PowerPilotNative
         public static void RestoreRegistryModes()
         {
             foreach (DISPLAY_DEVICE device in GetActiveDevices())
-                ChangeDisplaySettingsExReset(device.DeviceName, IntPtr.Zero, IntPtr.Zero, 0, IntPtr.Zero);
+            {
+                int change = ChangeDisplaySettingsExReset(device.DeviceName, IntPtr.Zero, IntPtr.Zero, 0, IntPtr.Zero);
+                if (change != DISP_CHANGE_SUCCESSFUL)
+                    throw new Win32Exception(change, "Cannot restore the registry display mode for " + device.DeviceName + ".");
+            }
         }
     }
 

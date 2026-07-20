@@ -61,8 +61,10 @@ internal sealed class AgentController
                 shuttingDown = request.Operation == AgentOperation.Shutdown;
                 try
                 {
-                    displays.Restore(state);
+                    var displayRestored = displays.Restore(state);
                     power.Restore(state);
+                    if (!displayRestored)
+                        throw new InvalidOperationException("Display state restoration remains pending; captured state was retained for retry.");
                     state.ActiveMode = null;
                     var message = request.Operation == AgentOperation.Shutdown
                         ? "Restored captured Windows state; agent is shutting down."
@@ -107,7 +109,7 @@ internal sealed class AgentController
         try
         {
             state.OriginalPowerPlan ??= power.GetActiveGuid();
-            if (mode == OperatingMode.Quiet) displays.CaptureForQuiet(state);
+            displays.Capture(mode, state);
             store.Save(state);
             power.Apply(mode, state);
             displays.Apply(mode, state);

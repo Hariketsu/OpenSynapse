@@ -1,24 +1,43 @@
 using OpenSynapse.Core;
-using PowerPilotNative;
-
 namespace OpenSynapse.Agent;
 
 internal sealed class DisplayPolicy
 {
+    private readonly IDisplaySystem displaySystem;
+
+    public DisplayPolicy()
+        : this(new WindowsDisplaySystem())
+    {
+    }
+
+    internal DisplayPolicy(IDisplaySystem displaySystem)
+    {
+        this.displaySystem = displaySystem;
+    }
+
+    public void Capture(OperatingMode mode, OpenSynapseState state)
+    {
+        CaptureDisplayScales(state);
+        if (mode == OperatingMode.Quiet) CaptureForQuiet(state);
+    }
+
     public void CaptureForQuiet(OpenSynapseState state)
     {
         if (state.AdvancedColors.Count == 0)
         {
             try
             {
-                state.AdvancedColors = AdvancedColorManager.GetStatus()
+                state.AdvancedColors = displaySystem.GetAdvancedColors()
                     .Where(item => item.Supported)
                     .Select(item => new AdvancedColorState(item.Key, item.Enabled))
                     .ToList();
             }
             catch { }
         }
-        state.OriginalBrightness ??= GetBrightness();
+        if (state.OriginalBrightness is null)
+        {
+            try { state.OriginalBrightness = displaySystem.GetBrightness(); } catch { }
+        }
     }
 
     public void Apply(OperatingMode mode, OpenSynapseState state)
@@ -27,74 +46,98 @@ internal sealed class DisplayPolicy
         {
             CaptureForQuiet(state);
             foreach (var color in state.AdvancedColors)
-                try { AdvancedColorManager.SetEnabled(color.Key, false); } catch { }
-            _ = SetBrightness(40);
-            try { DisplayModeManager.ApplyQuietRefresh(60); } catch { }
+                try { displaySystem.SetAdvancedColor(color.Key, false); } catch { }
+            try { displaySystem.SetBrightness(40); } catch { }
+            try { displaySystem.ApplyQuietRefresh(60); } catch { }
         }
         else
         {
-            RestoreCapturedDisplayState(state);
-            try { DisplayModeManager.ApplyMaximumRefresh(); } catch { }
+            RestoreCapturedDisplayState(state, clearCompleted: false, restoreScales: false);
+            try { displaySystem.ApplyMaximumRefresh(); } catch { }
         }
 
         try
         {
-            foreach (var display in DisplayScaling.GetActiveDisplays())
-                try { DisplayScaling.SetScale(display, display.IsInternal ? 150 : 125); } catch { }
+            foreach (var display in displaySystem.GetDisplays())
+                try { displaySystem.SetDisplayScale(display.Key, display.IsInternal ? 150 : 125); } catch { }
         }
         catch { }
     }
 
-    public void Restore(OpenSynapseState state)
+    public bool Restore(OpenSynapseState state)
     {
-        RestoreCapturedDisplayState(state);
-        try { DisplayModeManager.RestoreRegistryModes(); } catch { }
+        RestoreCapturedDisplayState(state, clearCompleted: true, restoreScales: true);
+        var refreshRestored = true;
+        try { displaySystem.RestoreRefresh(); }
+        catch { refreshRestored = false; }
+        return state.AdvancedColors.Count == 0
+            && state.DisplayScales.Count == 0
+            && state.OriginalBrightness is null
+            && refreshRestored;
     }
 
-    private static void RestoreCapturedDisplayState(OpenSynapseState state)
+    private void CaptureDisplayScales(OpenSynapseState state)
+    {
+        if (state.DisplayScales.Count != 0) return;
+        try
+        {
+            state.DisplayScales = displaySystem.GetDisplays()
+                .Select(display => new DisplayScaleState(display.Key, display.CurrentScalePercent))
+                .ToList();
+        }
+        catch { }
+    }
+
+    private void RestoreCapturedDisplayState(OpenSynapseState state, bool clearCompleted, bool restoreScales)
     {
         foreach (var color in state.AdvancedColors)
-            try { AdvancedColorManager.SetEnabled(color.Key, color.Enabled); } catch { }
-        try
+            try { displaySystem.SetAdvancedColor(color.Key, color.Enabled); } catch { }
+        if (clearCompleted)
         {
-            var current = AdvancedColorManager.GetStatus().ToDictionary(item => item.Key, item => item.Enabled);
-            state.AdvancedColors.RemoveAll(color => current.TryGetValue(color.Key, out var enabled) && enabled == color.Enabled);
+            try
+            {
+                var current = displaySystem.GetAdvancedColors().ToDictionary(item => item.Key, item => item.Enabled);
+                state.AdvancedColors.RemoveAll(color => current.TryGetValue(color.Key, out var enabled) && enabled == color.Enabled);
+            }
+            catch { }
         }
-        catch { }
         if (state.OriginalBrightness is int brightness)
         {
-            if (SetBrightness(brightness)) state.OriginalBrightness = null;
+            try { displaySystem.SetBrightness(brightness); } catch { }
+            if (clearCompleted)
+            {
+                try
+                {
+                    if (displaySystem.GetBrightness() == brightness) state.OriginalBrightness = null;
+                }
+                catch { }
+            }
         }
+        if (restoreScales) RestoreDisplayScales(state, clearCompleted);
     }
 
-    private static int? GetBrightness()
+    private void RestoreDisplayScales(OpenSynapseState state, bool clearCompleted)
     {
+        if (state.DisplayScales.Count == 0) return;
         try
         {
-            var output = RunPowerShell(
-                "(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightness | Where-Object Active | Select-Object -First 1).CurrentBrightness");
-            return int.TryParse(output, out var brightness) ? brightness : null;
-        }
-        catch { return null; }
-    }
+            var displays = displaySystem.GetDisplays()
+                .ToDictionary(display => display.Key, StringComparer.Ordinal);
+            foreach (var captured in state.DisplayScales)
+            {
+                if (displays.ContainsKey(captured.Key))
+                {
+                    try { displaySystem.SetDisplayScale(captured.Key, captured.ScalePercent); } catch { }
+                }
+            }
 
-    private static bool SetBrightness(int percent)
-    {
-        try
-        {
-            RunPowerShell(
-                "$methods = @(Get-CimInstance -Namespace root/WMI -ClassName WmiMonitorBrightnessMethods | Where-Object Active); if (-not $methods) { throw 'No active brightness controller.' }; $methods | ForEach-Object { Invoke-CimMethod -InputObject $_ -MethodName WmiSetBrightness -Arguments @{Timeout=1;Brightness=[byte]"
-                + percent
-                + "} | Out-Null }");
-            return true;
+            if (!clearCompleted) return;
+            var current = displaySystem.GetDisplays()
+                .ToDictionary(display => display.Key, StringComparer.Ordinal);
+            state.DisplayScales.RemoveAll(captured =>
+                current.TryGetValue(captured.Key, out var display)
+                && display.CurrentScalePercent == captured.ScalePercent);
         }
-        catch { return false; }
+        catch { }
     }
-
-    private static string RunPowerShell(string command) => ProcessRunner.Run(
-        Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe"),
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        command);
 }
