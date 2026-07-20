@@ -73,6 +73,25 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void SaveQuietMaintenance_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var names = QuietWakeDevicesBox.Text
+                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                .Select(name => name.Trim())
+                .Where(name => name.Length > 0)
+                .ToArray();
+            var settings = new QuietMaintenanceSettings(ManageWakeDevicesCheck.IsChecked == true, names);
+            settings.Validate();
+            await SendAsync(new AgentRequest(AgentOperation.SetQuietMaintenance, QuietMaintenance: settings));
+        }
+        catch (InvalidDataException ex)
+        {
+            Log(ex.Message);
+        }
+    }
+
     private async void ApplyDpi_Click(object sender, RoutedEventArgs e)
     {
         if (!int.TryParse(DpiBox.Text, out var dpi)) { Log("DPI must be a number."); return; }
@@ -127,6 +146,10 @@ public partial class MainWindow : Window
               + $"DPI {mouse.DpiX?.ToString() ?? "?"}/{mouse.DpiY?.ToString() ?? "?"}  "
               + $"Polling {mouse.PollingRate?.ToString() ?? "?"} Hz  Battery {mouse.BatteryPercent?.ToString() ?? "?"}%";
         if (status.DisplayPolicy is not null) UpdateDisplayPolicy(status.DisplayPolicy);
+        if (status.QuietMaintenance is not null) UpdateQuietMaintenance(status.QuietMaintenance);
+        WakeArmedText.Text = status.WakeArmedDevices is { Count: > 0 }
+            ? string.Join(Environment.NewLine, status.WakeArmedDevices)
+            : "No wake-armed devices detected.";
     }
 
     private DisplayPolicySettings ReadDisplayPolicy() => new(
@@ -157,6 +180,12 @@ public partial class MainWindow : Window
         QuietBrightnessBox.Text = settings.QuietBrightnessPercent.ToString();
         BalancedRefreshBox.Text = settings.BalancedRefreshRateHz.ToString();
         QuietRefreshBox.Text = settings.QuietRefreshRateHz.ToString();
+    }
+
+    private void UpdateQuietMaintenance(QuietMaintenanceSettings settings)
+    {
+        ManageWakeDevicesCheck.IsChecked = settings.ManageWakeDevices;
+        QuietWakeDevicesBox.Text = string.Join(Environment.NewLine, settings.WakeDeviceNames);
     }
 
     private static int ReadScale(Controls.ComboBox box, string name) => box.SelectedItem is int value

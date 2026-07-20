@@ -5,7 +5,7 @@ namespace OpenSynapse.Agent;
 
 internal sealed class OpenSynapseConfig
 {
-    public const int CurrentSchemaVersion = 2;
+    public const int CurrentSchemaVersion = 3;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public ModeSelection Selection { get; set; } = ModeSelection.Auto;
@@ -20,12 +20,15 @@ internal sealed class OpenSynapseConfig
     public int QuietBrightnessPercent { get; set; } = 40;
     public int BalancedRefreshRateHz { get; set; } = 120;
     public int QuietRefreshRateHz { get; set; } = 60;
+    public bool ManageWakeDevices { get; set; }
+    public List<string> QuietWakeDeviceNames { get; set; } = [];
 
     public void Validate()
     {
         if (!Enum.IsDefined(Selection))
             throw new InvalidDataException($"Unsupported mode selection {Selection}.");
         ToDisplayPolicySettings().Validate();
+        ToQuietMaintenanceSettings().Validate();
     }
 
     public DisplayPolicySettings ToDisplayPolicySettings() => new(
@@ -44,23 +47,52 @@ internal sealed class OpenSynapseConfig
     public OpenSynapseConfig WithDisplayPolicy(DisplayPolicySettings settings)
     {
         settings.Validate();
-        return new OpenSynapseConfig
-        {
-            SchemaVersion = SchemaVersion,
-            Selection = Selection,
-            BalancedBatteryThresholdPercent = settings.BalancedBatteryThresholdPercent,
-            ManageAdvancedColor = settings.ManageAdvancedColor,
-            ManageBrightness = settings.ManageBrightness,
-            ManageDisplayScaling = settings.ManageDisplayScaling,
-            RefreshPolicy = settings.RefreshPolicy,
-            InternalDisplayScalePercent = settings.InternalDisplayScalePercent,
-            ExternalDisplayScalePercent = settings.ExternalDisplayScalePercent,
-            BalancedBrightnessPercent = settings.BalancedBrightnessPercent,
-            QuietBrightnessPercent = settings.QuietBrightnessPercent,
-            BalancedRefreshRateHz = settings.BalancedRefreshRateHz,
-            QuietRefreshRateHz = settings.QuietRefreshRateHz
-        };
+        var updated = Copy();
+        updated.BalancedBatteryThresholdPercent = settings.BalancedBatteryThresholdPercent;
+        updated.ManageAdvancedColor = settings.ManageAdvancedColor;
+        updated.ManageBrightness = settings.ManageBrightness;
+        updated.ManageDisplayScaling = settings.ManageDisplayScaling;
+        updated.RefreshPolicy = settings.RefreshPolicy;
+        updated.InternalDisplayScalePercent = settings.InternalDisplayScalePercent;
+        updated.ExternalDisplayScalePercent = settings.ExternalDisplayScalePercent;
+        updated.BalancedBrightnessPercent = settings.BalancedBrightnessPercent;
+        updated.QuietBrightnessPercent = settings.QuietBrightnessPercent;
+        updated.BalancedRefreshRateHz = settings.BalancedRefreshRateHz;
+        updated.QuietRefreshRateHz = settings.QuietRefreshRateHz;
+        return updated;
     }
+
+    public QuietMaintenanceSettings ToQuietMaintenanceSettings() => new(
+        ManageWakeDevices,
+        QuietWakeDeviceNames.AsReadOnly());
+
+    public OpenSynapseConfig WithQuietMaintenance(QuietMaintenanceSettings settings)
+    {
+        settings.Validate();
+        var updated = Copy();
+        updated.ManageWakeDevices = settings.ManageWakeDevices;
+        updated.QuietWakeDeviceNames = [.. settings.WakeDeviceNames];
+        return updated;
+    }
+
+    private OpenSynapseConfig Copy() => new()
+    {
+        SchemaVersion = SchemaVersion,
+        Selection = Selection,
+        BalancedBatteryThresholdPercent = BalancedBatteryThresholdPercent,
+        ManageAdvancedColor = ManageAdvancedColor,
+        ManageBrightness = ManageBrightness,
+        ManageDisplayScaling = ManageDisplayScaling,
+        RefreshPolicy = RefreshPolicy,
+        InternalDisplayScalePercent = InternalDisplayScalePercent,
+        ExternalDisplayScalePercent = ExternalDisplayScalePercent,
+        BalancedBrightnessPercent = BalancedBrightnessPercent,
+        QuietBrightnessPercent = QuietBrightnessPercent,
+        BalancedRefreshRateHz = BalancedRefreshRateHz,
+        QuietRefreshRateHz = QuietRefreshRateHz,
+        ManageWakeDevices = ManageWakeDevices,
+        QuietWakeDeviceNames = [.. QuietWakeDeviceNames]
+    };
 }
 
 internal sealed class ConfigurationStore
@@ -103,6 +135,7 @@ internal sealed class ConfigurationStore
                 $"Configuration schema {config.SchemaVersion} is newer than supported schema {OpenSynapseConfig.CurrentSchemaVersion}.");
         var requiresMigration = config.SchemaVersion < OpenSynapseConfig.CurrentSchemaVersion;
         config.SchemaVersion = OpenSynapseConfig.CurrentSchemaVersion;
+        config.QuietWakeDeviceNames ??= [];
         config.Validate();
         if (requiresMigration) Save(config);
         return config;

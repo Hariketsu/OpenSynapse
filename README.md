@@ -23,7 +23,7 @@ OpenSynapse currently implements the M0–M3 development slice. Implementation d
 
 | Area | Current capability | Maturity |
 | --- | --- | --- |
-| Windows policies | Adapter-aware Auto, Performance, Balanced, and Quiet selection; power plans; refresh rate; Advanced Color/HDR; internal brightness; display scaling | Implemented, target-Windows validation pending |
+| Windows policies | Adapter-aware Auto, Performance, Balanced, and Quiet selection; power plans; refresh rate; Advanced Color/HDR; internal brightness; display scaling; optional exact-name wake-device control | Implemented, target-Windows validation pending |
 | State restoration | Atomic captured state and verified power-plan rollback | Implemented, target-Windows validation pending |
 | Desktop control | Non-elevated WPF panel and tray UI connected to a per-user elevated agent | Implemented, target-Windows validation pending |
 | Razer mouse | Discovery, status, DPI, and standard-receiver polling control | Experimental |
@@ -108,11 +108,13 @@ powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1
 powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1 -TestMouseWrites
 ```
 
-The script verifies Performance/Balanced/Quiet application (Balanced when battery is at least 50%), named-pipe lifecycle, agent shutdown, power-plan rollback, and captured-state cleanup. The mouse option requires a readable DeathAdder V3 Pro and does not intentionally select new values.
+The script verifies Performance/Balanced/Quiet application (Balanced when battery is at least 50%), named-pipe lifecycle, agent shutdown, power-plan and wake-permission rollback, and captured-state cleanup. The mouse option requires a readable DeathAdder V3 Pro and does not intentionally select new values.
 
 ## Configuration
 
-The desktop panel reads and edits the display policy through the elevated agent. The agent stores it in `%LOCALAPPDATA%\OpenSynapse\config.json` with a versioned schema: selected mode, Balanced battery threshold, optional Advanced Color/brightness/scaling management, internal/external scaling, Balanced/Quiet brightness, and refresh policy (`FollowMode`, `Unmanaged`, `Maximum`, `Fixed60`, `Fixed120`, or `Fixed240`). Invalid or newer configuration is rejected without overwriting the file. Before applying changed display settings, the agent confirms restoration of the previous display snapshot; captured rollback data remains separate in `state.json`.
+The desktop panel reads and edits policy through the elevated agent. The agent stores it in `%LOCALAPPDATA%\OpenSynapse\config.json` with a versioned schema: selected mode, Balanced battery threshold, optional Advanced Color/brightness/scaling management, internal/external scaling, Balanced/Quiet brightness, refresh policy (`FollowMode`, `Unmanaged`, `Maximum`, `Fixed60`, `Fixed120`, or `Fixed240`), and optional Quiet wake-device names. Invalid or newer configuration is rejected without overwriting the file. Before applying changed display settings, the agent confirms restoration of the previous display snapshot; captured rollback data remains separate in `state.json`.
+
+Quiet wake-device management is disabled by default. When enabled, names are matched exactly against `powercfg /devicequery wake_armed`; there are no default devices or wildcard patterns. Rollback intent is persisted before a permission is disabled, and every tracked permission is verified when leaving Quiet, exiting, or uninstalling. OpenSynapse does not stop applications or vendor services.
 
 ## Safety and privacy
 
@@ -121,6 +123,7 @@ The desktop panel reads and edits the display policy through the elevated agent.
 - Responses must match the request transaction, command class, command ID, and checksum.
 - Privileged IPC is restricted to the current Windows user.
 - Configuration and captured system state are stored separately and atomically under `%LOCALAPPDATA%\OpenSynapse`.
+- Optional Quiet wake-device changes require an exact user allowlist and retain verified rollback state; process and vendor-service termination are not implemented.
 - Agent events are written locally to a bounded `logs\agent.log` with one rotated backup.
 - Adapter classification invokes `nvidia-smi` with a read-only query and fails safe to Quiet when the power limit cannot be verified.
 - The current implementation contains no telemetry, analytics, updater, account system, or runtime network client.

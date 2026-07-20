@@ -33,8 +33,10 @@ public sealed class StateStoreTests
         Assert.AreEqual(OpenSynapseState.CurrentSchemaVersion, state.SchemaVersion);
         Assert.IsNotNull(state.AdvancedColors);
         Assert.IsNotNull(state.DisplayScales);
+        Assert.IsNotNull(state.DisabledWakeDevices);
         Assert.IsEmpty(state.AdvancedColors);
         Assert.IsEmpty(state.DisplayScales);
+        Assert.IsEmpty(state.DisabledWakeDevices);
         StringAssert.Contains(
             File.ReadAllText(statePath),
             $"\"schemaVersion\":{OpenSynapseState.CurrentSchemaVersion}");
@@ -79,7 +81,8 @@ public sealed class StateStoreTests
         var expected = new OpenSynapseState
         {
             ActiveMode = OperatingMode.Balanced,
-            BalancedPowerPlan = "11111111-2222-3333-4444-555555555555"
+            BalancedPowerPlan = "11111111-2222-3333-4444-555555555555",
+            DisabledWakeDevices = ["HID-compliant mouse"]
         };
         var store = new StateStore(statePath);
 
@@ -88,5 +91,6 @@ public sealed class StateStoreTests
 
         Assert.AreEqual(OperatingMode.Balanced, actual.ActiveMode);
         Assert.AreEqual(expected.BalancedPowerPlan, actual.BalancedPowerPlan);
+        CollectionAssert.AreEqual(expected.DisabledWakeDevices, actual.DisabledWakeDevices);
     }
 }

@@ -12,6 +12,7 @@ internal sealed class AgentController
     private readonly PowerPlanManager power = new();
     private readonly PowerSupplyProbe powerSupply = new();
     private readonly DisplayPolicy displays = new();
+    private readonly WakeDeviceManager wakeDevices = new();
     private readonly DeathAdderHid deathAdder = new();
     private bool shuttingDown;
 
@@ -50,7 +51,11 @@ internal sealed class AgentController
                     config.Selection,
                     powerSnapshot,
                     config.BalancedBatteryThresholdPercent);
-                if (!force && state.ActiveMode == desiredMode) return;
+                if (!force && state.ActiveMode == desiredMode)
+                {
+                    wakeDevices.Apply(desiredMode, config, state, () => store.Save(state));
+                    return;
+                }
                 ApplyMode(desiredMode, state, config, powerSnapshot);
             }
             catch (Exception ex)
@@ -147,6 +152,25 @@ internal sealed class AgentController
                 _ = log.TryWrite("configuration.display.changed", updatedConfig.RefreshPolicy.ToString());
                 return ApplyMode(updatedMode, state, updatedConfig, updatedPowerSnapshot);
 
+            case AgentOperation.SetQuietMaintenance:
+                RequireAdministrator();
+                var quietSettings = request.QuietMaintenance
+                    ?? throw new ArgumentException("QuietMaintenance is required.");
+                var updatedQuietConfig = config.WithQuietMaintenance(quietSettings);
+                wakeDevices.Restore(state, () => store.Save(state));
+                configurationStore.Save(updatedQuietConfig);
+                if (state.ActiveMode == OperatingMode.Quiet)
+                    wakeDevices.Apply(OperatingMode.Quiet, updatedQuietConfig, state, () => store.Save(state));
+                _ = log.TryWrite(
+                    "configuration.quiet-maintenance.changed",
+                    updatedQuietConfig.ManageWakeDevices
+                        ? $"Enabled for {updatedQuietConfig.QuietWakeDeviceNames.Count} exact device name(s)."
+                        : "Disabled.");
+                return new AgentResponse(
+                    true,
+                    "Quiet wake-device settings saved and reconciled.",
+                    GetStatus(state, updatedQuietConfig));
+
             case AgentOperation.Restore:
             case AgentOperation.Shutdown:
                 RequireAdministrator();
@@ -155,12 +179,13 @@ internal sealed class AgentController
                 {
                     var displayRestored = displays.Restore(state);
                     power.Restore(state);
+                    wakeDevices.Restore(state, () => store.Save(state));
                     if (!displayRestored)
                         throw new InvalidOperationException("Display state restoration remains pending; captured state was retained for retry.");
                     state.ActiveMode = null;
                     var message = request.Operation == AgentOperation.Shutdown
-                        ? "Restored captured Windows state; agent is shutting down."
-                        : "Restored captured Windows state.";
+                        ? "Restored captured Windows and wake state; agent is shutting down."
+                        : "Restored captured Windows and wake state.";
                     _ = log.TryWrite("state.restored", message);
                     return new AgentResponse(true, message, GetStatus(state, config));
                 }
@@ -177,15 +202,18 @@ internal sealed class AgentController
                 {
                     var displayRestored = displays.Restore(state);
                     power.Restore(state);
+                    wakeDevices.Restore(state, () => store.Save(state));
                     if (!displayRestored)
                         throw new InvalidOperationException(
                             "Display restoration remains pending; uninstall cleanup was stopped for a later retry.");
                     state.ActiveMode = null;
                     power.DeleteManagedPlans(state);
-                    _ = log.TryWrite("uninstall.cleanup", "Restored captured state and removed managed power plans.");
+                    _ = log.TryWrite(
+                        "uninstall.cleanup",
+                        "Restored captured state and wake permissions, then removed managed power plans.");
                     return new AgentResponse(
                         true,
-                        "Restored captured state and removed managed power plans.",
+                        "Restored captured state and wake permissions, then removed managed power plans.",
                         GetStatus(state, config));
                 }
                 finally { store.Save(state); }
@@ -223,7 +251,9 @@ internal sealed class AgentController
             powerSnapshot.BatteryPercent,
             powerSnapshot.AdapterLimitWatts,
             deathAdder.ReadDevices(),
-            config.ToDisplayPolicySettings());
+            config.ToDisplayPolicySettings(),
+            config.ToQuietMaintenanceSettings(),
+            GetWakeDevicesForStatus());
     }
 
     private AgentResponse ApplyMode(
@@ -239,6 +269,7 @@ internal sealed class AgentController
             displays.Capture(mode, state, config);
             store.Save(state);
             power.Apply(mode, state);
+            wakeDevices.Apply(mode, config, state, () => store.Save(state));
             displays.Apply(mode, state, config);
             state.ActiveMode = mode;
             _ = log.TryWrite("mode.applied", mode.ToString());
@@ -287,7 +318,8 @@ internal sealed class AgentController
                 || state.OriginalPowerPlan is not null
                 || state.OriginalBrightness is not null
                 || state.AdvancedColors.Count != 0
-                || state.DisplayScales.Count != 0;
+                || state.DisplayScales.Count != 0
+                || state.DisabledWakeDevices.Count != 0;
             checks.Add(new DiagnosticCheck(
                 "Rollback snapshot",
                 hasRollback ? DiagnosticStatus.Warning : DiagnosticStatus.Passed,
@@ -359,6 +391,19 @@ internal sealed class AgentController
 
         try
         {
+            var devices = wakeDevices.GetWakeArmedDevices();
+            checks.Add(new DiagnosticCheck(
+                "Wake devices",
+                DiagnosticStatus.Passed,
+                $"Detected {devices.Count} currently wake-armed device(s)."));
+        }
+        catch (Exception ex)
+        {
+            checks.Add(new DiagnosticCheck("Wake devices", DiagnosticStatus.Warning, ex.Message));
+        }
+
+        try
+        {
             var count = deathAdder.ReadDevices().Count;
             checks.Add(new DiagnosticCheck(
                 "Razer devices",
@@ -394,5 +439,15 @@ internal sealed class AgentController
         throw new InvalidOperationException(
             $"Balanced mode requires at least {config.BalancedBatteryThresholdPercent}% battery; "
             + $"current charge is {powerSnapshot.BatteryPercent?.ToString() ?? "unavailable"}%.");
+    }
+
+    private IReadOnlyList<string> GetWakeDevicesForStatus()
+    {
+        try { return wakeDevices.GetWakeArmedDevices(); }
+        catch (Exception ex)
+        {
+            _ = log.TryWrite("wake-device.query.failed", ex.Message);
+            return [];
+        }
     }
 }

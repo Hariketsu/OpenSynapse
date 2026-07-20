@@ -89,6 +89,30 @@ public sealed record DisplayPolicySettings(
     }
 }
 
+public sealed record QuietMaintenanceSettings(
+    bool ManageWakeDevices,
+    IReadOnlyList<string> WakeDeviceNames)
+{
+    public void Validate()
+    {
+        if (WakeDeviceNames is null)
+            throw new InvalidDataException("Wake device names are required.");
+        if (WakeDeviceNames.Count > 16)
+            throw new InvalidDataException("At most 16 wake devices can be configured.");
+
+        var unique = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in WakeDeviceNames)
+        {
+            if (string.IsNullOrWhiteSpace(name) || name.Length > 192 || name.Any(char.IsControl))
+                throw new InvalidDataException("Wake device names must contain 1 to 192 printable characters.");
+            if (!string.Equals(name, name.Trim(), StringComparison.Ordinal))
+                throw new InvalidDataException("Wake device names cannot have leading or trailing whitespace.");
+            if (!unique.Add(name))
+                throw new InvalidDataException($"Wake device name {name} is duplicated.");
+        }
+    }
+}
+
 public sealed record PowerSnapshot(
     PowerSource Source,
     SupplyType SupplyType,
@@ -141,6 +165,7 @@ public enum AgentOperation
     Apply,
     SetSelection,
     SetDisplayPolicy,
+    SetQuietMaintenance,
     Restore,
     UninstallCleanup,
     ListDevices,
@@ -157,7 +182,8 @@ public sealed record AgentRequest(
     int? DpiY = null,
     int? PollingRate = null,
     int? ProductId = null,
-    DisplayPolicySettings? DisplayPolicy = null);
+    DisplayPolicySettings? DisplayPolicy = null,
+    QuietMaintenanceSettings? QuietMaintenance = null);
 
 public sealed record RazerDevice(
     int VendorId,
@@ -181,7 +207,9 @@ public sealed record AgentStatus(
     int? BatteryPercent,
     double? AdapterLimitWatts,
     IReadOnlyList<RazerDevice> RazerDevices,
-    DisplayPolicySettings? DisplayPolicy = null);
+    DisplayPolicySettings? DisplayPolicy = null,
+    QuietMaintenanceSettings? QuietMaintenance = null,
+    IReadOnlyList<string>? WakeArmedDevices = null);
 
 public sealed record AgentResponse(
     bool Success,

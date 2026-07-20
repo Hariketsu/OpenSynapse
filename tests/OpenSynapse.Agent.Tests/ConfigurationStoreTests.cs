@@ -36,6 +36,8 @@ public sealed class ConfigurationStoreTests
         Assert.AreEqual(RefreshPolicy.FollowMode, config.RefreshPolicy);
         Assert.AreEqual(150, config.InternalDisplayScalePercent);
         Assert.AreEqual(125, config.ExternalDisplayScalePercent);
+        Assert.IsFalse(config.ManageWakeDevices);
+        Assert.IsEmpty(config.QuietWakeDeviceNames);
         Assert.IsTrue(File.Exists(configPath));
     }
 
@@ -55,7 +57,9 @@ public sealed class ConfigurationStoreTests
             BalancedBrightnessPercent = 65,
             QuietBrightnessPercent = 35,
             BalancedRefreshRateHz = 144,
-            QuietRefreshRateHz = 75
+            QuietRefreshRateHz = 75,
+            ManageWakeDevices = true,
+            QuietWakeDeviceNames = ["MediaTek Wi-Fi", "HID-compliant mouse"]
         };
         var store = new ConfigurationStore(configPath);
 
@@ -74,6 +78,8 @@ public sealed class ConfigurationStoreTests
         Assert.AreEqual(expected.QuietBrightnessPercent, actual.QuietBrightnessPercent);
         Assert.AreEqual(expected.BalancedRefreshRateHz, actual.BalancedRefreshRateHz);
         Assert.AreEqual(expected.QuietRefreshRateHz, actual.QuietRefreshRateHz);
+        Assert.AreEqual(expected.ManageWakeDevices, actual.ManageWakeDevices);
+        CollectionAssert.AreEqual(expected.QuietWakeDeviceNames, actual.QuietWakeDeviceNames);
     }
 
     [TestMethod]
@@ -98,6 +104,23 @@ public sealed class ConfigurationStoreTests
         Assert.AreEqual(ModeSelection.Performance, updated.Selection);
         Assert.AreEqual(settings, updated.ToDisplayPolicySettings());
         Assert.AreEqual(RefreshPolicy.FollowMode, original.RefreshPolicy);
+    }
+
+    [TestMethod]
+    public void WithQuietMaintenancePreservesDisplayPolicyAndCopiesTheAllowlist()
+    {
+        var original = new OpenSynapseConfig { RefreshPolicy = RefreshPolicy.Fixed120 };
+        var names = new[] { "MediaTek Wi-Fi", "HID-compliant mouse" };
+
+        var updated = original.WithQuietMaintenance(new QuietMaintenanceSettings(true, names));
+        names[0] = "Changed after update";
+
+        Assert.AreEqual(RefreshPolicy.Fixed120, updated.RefreshPolicy);
+        Assert.IsTrue(updated.ManageWakeDevices);
+        CollectionAssert.AreEqual(
+            new[] { "MediaTek Wi-Fi", "HID-compliant mouse" },
+            updated.QuietWakeDeviceNames);
+        Assert.IsFalse(original.ManageWakeDevices);
     }
 
     [TestMethod]

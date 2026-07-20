@@ -1,9 +1,25 @@
 [CmdletBinding()]
-param([switch]$TestMouseWrites)
+param(
+    [switch]$TestMouseWrites,
+    [string]$DotnetPath
+)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 $agent = Join-Path $root 'src\OpenSynapse.Agent\bin\Debug\net10.0-windows\OpenSynapse.Agent.dll'
+
+if ([string]::IsNullOrWhiteSpace($DotnetPath)) {
+    $dotnetCommand = Get-Command dotnet -ErrorAction SilentlyContinue
+    if ($null -ne $dotnetCommand) { $DotnetPath = $dotnetCommand.Source }
+    else {
+        $scoopDotnet = Join-Path $env:USERPROFILE 'scoop\apps\dotnet-sdk\current\dotnet.exe'
+        if (Test-Path -LiteralPath $scoopDotnet -PathType Leaf) { $DotnetPath = $scoopDotnet }
+    }
+}
+if ([string]::IsNullOrWhiteSpace($DotnetPath) -or -not (Test-Path -LiteralPath $DotnetPath -PathType Leaf)) {
+    throw 'dotnet SDK was not found. Add dotnet to PATH or pass -DotnetPath.'
+}
+$dotnetExecutable = [IO.Path]::GetFullPath($DotnetPath)
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $principal = [Security.Principal.WindowsPrincipal]::new($identity)
@@ -11,12 +27,12 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     throw 'Run this smoke test from an elevated PowerShell terminal.'
 }
 
-dotnet build (Join-Path $root 'OpenSynapse.sln')
+& $dotnetExecutable build (Join-Path $root 'OpenSynapse.sln')
 if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
 
 function Invoke-Agent {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
-    $json = & dotnet $agent @Arguments
+    $json = & $dotnetExecutable $agent @Arguments
     if ($LASTEXITCODE -ne 0) { throw ($json -join [Environment]::NewLine) }
     return ($json -join [Environment]::NewLine) | ConvertFrom-Json
 }
@@ -41,6 +57,7 @@ function Invoke-AgentPipe {
 $originalText = & powercfg /getactivescheme
 $originalGuid = [regex]::Match(($originalText | Out-String), '[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}').Value
 if (-not $originalGuid) { throw 'Cannot read the original Windows power plan.' }
+$originalWakeDevices = @(& powercfg /devicequery wake_armed | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object)
 
 function Assert-Restored {
     $restoredText = & powercfg /getactivescheme
@@ -50,6 +67,9 @@ function Assert-Restored {
     }
     $state = Get-Content (Join-Path $env:LOCALAPPDATA 'OpenSynapse\state.json') -Raw | ConvertFrom-Json
     if ($null -ne $state.OriginalPowerPlan) { throw 'Restored power plan snapshot was not cleared.' }
+    if (@($state.DisabledWakeDevices).Count -ne 0) { throw 'Restored wake-device snapshot was not cleared.' }
+    $restoredWakeDevices = @(& powercfg /devicequery wake_armed | ForEach-Object { $_.Trim() } | Where-Object { $_ } | Sort-Object)
+    if (Compare-Object $originalWakeDevices $restoredWakeDevices) { throw 'Wake-device rollback verification failed.' }
 }
 
 try {
@@ -96,7 +116,7 @@ finally {
 
 $server = $null
 try {
-    $server = Start-Process -FilePath dotnet -ArgumentList ('"{0}" serve' -f $agent) -WindowStyle Hidden -PassThru
+    $server = Start-Process -FilePath $dotnetExecutable -ArgumentList ('"{0}" serve' -f $agent) -WindowStyle Hidden -PassThru
     $pipeStatus = $null
     for ($attempt = 0; $attempt -lt 10 -and $null -eq $pipeStatus; $attempt++) {
         try { $pipeStatus = Invoke-AgentPipe Status }

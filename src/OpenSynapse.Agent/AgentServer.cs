@@ -1,4 +1,5 @@
 using System.IO.Pipes;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Win32;
 using OpenSynapse.Core;
@@ -7,6 +8,8 @@ namespace OpenSynapse.Agent;
 
 internal sealed class AgentServer(AgentController controller)
 {
+    internal const int MaxRequestCharacters = 32768;
+    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(5);
     private readonly object displayEventGate = new();
     private CancellationTokenSource? displayDebounceCancellation;
     private Task displayReapply = Task.CompletedTask;
@@ -103,9 +106,12 @@ internal sealed class AgentServer(AgentController controller)
         AgentRequest? request = null;
         try
         {
-            var line = await reader.ReadLineAsync(cancellationToken);
-            if (string.IsNullOrWhiteSpace(line) || line.Length > 4096)
-                throw new InvalidDataException("Request must be one JSON line no longer than 4096 characters.");
+            using var requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            requestCancellation.CancelAfter(RequestTimeout);
+            var line = await ReadBoundedLineAsync(reader, requestCancellation.Token);
+            if (string.IsNullOrWhiteSpace(line))
+                throw new InvalidDataException(
+                    $"Request must be one JSON line no longer than {MaxRequestCharacters} characters.");
             request = JsonSerializer.Deserialize<AgentRequest>(line, AgentJson.Options)
                 ?? throw new InvalidDataException("Request is empty.");
             if (!IsPipeOperationAllowed(request.Operation))
@@ -122,4 +128,28 @@ internal sealed class AgentServer(AgentController controller)
 
     internal static bool IsPipeOperationAllowed(AgentOperation operation) =>
         operation != AgentOperation.UninstallCleanup;
+
+    internal static async Task<string?> ReadBoundedLineAsync(
+        TextReader reader,
+        CancellationToken cancellationToken)
+    {
+        var builder = new StringBuilder(1024);
+        var buffer = new char[1024];
+        while (true)
+        {
+            var read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken);
+            if (read == 0)
+                return builder.Length == 0 ? null : builder.ToString().TrimEnd('\r');
+
+            for (var index = 0; index < read; index++)
+            {
+                var character = buffer[index];
+                if (character is '\r' or '\n') return builder.ToString();
+                if (builder.Length >= MaxRequestCharacters)
+                    throw new InvalidDataException(
+                        $"Request exceeds {MaxRequestCharacters} characters.");
+                builder.Append(character);
+            }
+        }
+    }
 }
