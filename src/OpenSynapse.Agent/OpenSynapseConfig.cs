@@ -10,11 +10,15 @@ internal sealed class OpenSynapseConfig
         100, 125, 150, 175, 200, 225, 250, 300, 350, 400, 450, 500
     ];
 
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public ModeSelection Selection { get; set; } = ModeSelection.Auto;
     public int BalancedBatteryThresholdPercent { get; set; } = 50;
+    public bool ManageAdvancedColor { get; set; } = true;
+    public bool ManageBrightness { get; set; } = true;
+    public bool ManageDisplayScaling { get; set; } = true;
+    public RefreshPolicy RefreshPolicy { get; set; } = RefreshPolicy.FollowMode;
     public int InternalDisplayScalePercent { get; set; } = 150;
     public int ExternalDisplayScalePercent { get; set; } = 125;
     public int BalancedBrightnessPercent { get; set; } = 60;
@@ -26,6 +30,8 @@ internal sealed class OpenSynapseConfig
     {
         if (!Enum.IsDefined(Selection))
             throw new InvalidDataException($"Unsupported mode selection {Selection}.");
+        if (!Enum.IsDefined(RefreshPolicy))
+            throw new InvalidDataException($"Unsupported refresh policy {RefreshPolicy}.");
         if (BalancedBatteryThresholdPercent is < 0 or > 100)
             throw new InvalidDataException("Balanced battery threshold must be between 0 and 100 percent.");
         ValidateScale(InternalDisplayScalePercent, nameof(InternalDisplayScalePercent));
@@ -93,8 +99,10 @@ internal sealed class ConfigurationStore
         if (config.SchemaVersion > OpenSynapseConfig.CurrentSchemaVersion)
             throw new NotSupportedException(
                 $"Configuration schema {config.SchemaVersion} is newer than supported schema {OpenSynapseConfig.CurrentSchemaVersion}.");
+        var requiresMigration = config.SchemaVersion < OpenSynapseConfig.CurrentSchemaVersion;
         config.SchemaVersion = OpenSynapseConfig.CurrentSchemaVersion;
         config.Validate();
+        if (requiresMigration) Save(config);
         return config;
     }
 

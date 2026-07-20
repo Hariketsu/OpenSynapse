@@ -31,6 +31,16 @@ public enum SupplyType
     Battery
 }
 
+public enum RefreshPolicy
+{
+    FollowMode,
+    Unmanaged,
+    Maximum,
+    Fixed60,
+    Fixed120,
+    Fixed240
+}
+
 public sealed record PowerSnapshot(
     PowerSource Source,
     SupplyType SupplyType,

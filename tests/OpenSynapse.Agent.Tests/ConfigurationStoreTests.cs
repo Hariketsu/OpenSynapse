@@ -30,6 +30,10 @@ public sealed class ConfigurationStoreTests
         Assert.AreEqual(OpenSynapseConfig.CurrentSchemaVersion, config.SchemaVersion);
         Assert.AreEqual(ModeSelection.Balanced, config.Selection);
         Assert.AreEqual(50, config.BalancedBatteryThresholdPercent);
+        Assert.IsTrue(config.ManageAdvancedColor);
+        Assert.IsTrue(config.ManageBrightness);
+        Assert.IsTrue(config.ManageDisplayScaling);
+        Assert.AreEqual(RefreshPolicy.FollowMode, config.RefreshPolicy);
         Assert.AreEqual(150, config.InternalDisplayScalePercent);
         Assert.AreEqual(125, config.ExternalDisplayScalePercent);
         Assert.IsTrue(File.Exists(configPath));
@@ -42,6 +46,10 @@ public sealed class ConfigurationStoreTests
         {
             Selection = ModeSelection.Quiet,
             BalancedBatteryThresholdPercent = 55,
+            ManageAdvancedColor = false,
+            ManageBrightness = false,
+            ManageDisplayScaling = false,
+            RefreshPolicy = RefreshPolicy.Fixed240,
             InternalDisplayScalePercent = 175,
             ExternalDisplayScalePercent = 150,
             BalancedBrightnessPercent = 65,
@@ -56,6 +64,10 @@ public sealed class ConfigurationStoreTests
 
         Assert.AreEqual(expected.Selection, actual.Selection);
         Assert.AreEqual(expected.BalancedBatteryThresholdPercent, actual.BalancedBatteryThresholdPercent);
+        Assert.AreEqual(expected.ManageAdvancedColor, actual.ManageAdvancedColor);
+        Assert.AreEqual(expected.ManageBrightness, actual.ManageBrightness);
+        Assert.AreEqual(expected.ManageDisplayScaling, actual.ManageDisplayScaling);
+        Assert.AreEqual(expected.RefreshPolicy, actual.RefreshPolicy);
         Assert.AreEqual(expected.InternalDisplayScalePercent, actual.InternalDisplayScalePercent);
         Assert.AreEqual(expected.ExternalDisplayScalePercent, actual.ExternalDisplayScalePercent);
         Assert.AreEqual(expected.BalancedBrightnessPercent, actual.BalancedBrightnessPercent);
@@ -82,5 +94,19 @@ public sealed class ConfigurationStoreTests
             "{\"schemaVersion\":" + (OpenSynapseConfig.CurrentSchemaVersion + 1) + "}");
 
         Assert.ThrowsExactly<NotSupportedException>(() => new ConfigurationStore(configPath).Load());
+    }
+
+    [TestMethod]
+    public void LoadPersistsSchemaUpgradeAndNewDefaults()
+    {
+        File.WriteAllText(configPath, "{\"schemaVersion\":1,\"selection\":\"Auto\"}");
+
+        var config = new ConfigurationStore(configPath).Load();
+
+        Assert.AreEqual(OpenSynapseConfig.CurrentSchemaVersion, config.SchemaVersion);
+        StringAssert.Contains(
+            File.ReadAllText(configPath),
+            $"\"schemaVersion\":{OpenSynapseConfig.CurrentSchemaVersion}");
+        StringAssert.Contains(File.ReadAllText(configPath), "\"refreshPolicy\":\"FollowMode\"");
     }
 }

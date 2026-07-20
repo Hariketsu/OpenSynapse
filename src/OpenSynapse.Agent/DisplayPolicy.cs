@@ -17,26 +17,28 @@ internal sealed class DisplayPolicy
 
     public int GetActiveDisplayCount() => displaySystem.GetDisplays().Count;
 
-    public void Capture(OperatingMode mode, OpenSynapseState state)
+    public void Capture(OperatingMode mode, OpenSynapseState state, OpenSynapseConfig config)
     {
-        CaptureDisplayScales(state);
-        if (mode != OperatingMode.Performance) CaptureForLowPower(state);
+        if (config.ManageDisplayScaling) CaptureDisplayScales(state);
+        if (mode != OperatingMode.Performance) CaptureForLowPower(state, config);
     }
 
-    private void CaptureForLowPower(OpenSynapseState state)
+    private void CaptureForLowPower(OpenSynapseState state, OpenSynapseConfig config)
     {
-        if (state.AdvancedColors.Count == 0)
+        if (config.ManageAdvancedColor)
         {
             try
             {
-                state.AdvancedColors = displaySystem.GetAdvancedColors()
-                    .Where(item => item.Supported)
-                    .Select(item => new AdvancedColorState(item.Key, item.Enabled))
-                    .ToList();
+                var captured = state.AdvancedColors
+                    .Select(item => item.Key)
+                    .ToHashSet(StringComparer.Ordinal);
+                state.AdvancedColors.AddRange(displaySystem.GetAdvancedColors()
+                    .Where(item => item.Supported && captured.Add(item.Key))
+                    .Select(item => new AdvancedColorState(item.Key, item.Enabled)));
             }
             catch { }
         }
-        if (state.OriginalBrightness is null)
+        if (config.ManageBrightness && state.OriginalBrightness is null)
         {
             try { state.OriginalBrightness = displaySystem.GetBrightness(); } catch { }
         }
@@ -46,46 +48,59 @@ internal sealed class DisplayPolicy
     {
         if (mode != OperatingMode.Performance)
         {
-            CaptureForLowPower(state);
-            foreach (var color in state.AdvancedColors)
-                try { displaySystem.SetAdvancedColor(color.Key, false); } catch { }
-            try
+            CaptureForLowPower(state, config);
+            if (config.ManageAdvancedColor)
             {
-                displaySystem.SetBrightness(
-                    mode == OperatingMode.Balanced
-                        ? config.BalancedBrightnessPercent
-                        : config.QuietBrightnessPercent);
+                foreach (var color in state.AdvancedColors)
+                    try { displaySystem.SetAdvancedColor(color.Key, false); } catch { }
             }
-            catch { }
+            else
+            {
+                RestoreAdvancedColors(state, clearCompleted: false);
+            }
+            if (config.ManageBrightness)
+            {
+                try
+                {
+                    displaySystem.SetBrightness(
+                        mode == OperatingMode.Balanced
+                            ? config.BalancedBrightnessPercent
+                            : config.QuietBrightnessPercent);
+                }
+                catch { }
+            }
+            else
+            {
+                RestoreBrightness(state, clearCompleted: false);
+            }
+        }
+        else
+        {
+            RestoreCapturedDisplayState(state, clearCompleted: false, restoreScales: false);
+        }
+        ApplyRefreshPolicy(mode, config);
+
+        if (config.ManageDisplayScaling)
+        {
             try
             {
-                displaySystem.ApplyFixedRefresh(
-                    mode == OperatingMode.Balanced
-                        ? config.BalancedRefreshRateHz
-                        : config.QuietRefreshRateHz);
+                foreach (var display in displaySystem.GetDisplays())
+                    try
+                    {
+                        displaySystem.SetDisplayScale(
+                            display.Key,
+                            display.IsInternal
+                                ? config.InternalDisplayScalePercent
+                                : config.ExternalDisplayScalePercent);
+                    }
+                    catch { }
             }
             catch { }
         }
         else
         {
-            RestoreCapturedDisplayState(state, clearCompleted: false, restoreScales: false);
-            try { displaySystem.ApplyMaximumRefresh(); } catch { }
+            RestoreDisplayScales(state, clearCompleted: false);
         }
-
-        try
-        {
-            foreach (var display in displaySystem.GetDisplays())
-                try
-                {
-                    displaySystem.SetDisplayScale(
-                        display.Key,
-                        display.IsInternal
-                            ? config.InternalDisplayScalePercent
-                            : config.ExternalDisplayScalePercent);
-                }
-                catch { }
-        }
-        catch { }
     }
 
     public bool Restore(OpenSynapseState state)
@@ -102,17 +117,26 @@ internal sealed class DisplayPolicy
 
     private void CaptureDisplayScales(OpenSynapseState state)
     {
-        if (state.DisplayScales.Count != 0) return;
         try
         {
-            state.DisplayScales = displaySystem.GetDisplays()
-                .Select(display => new DisplayScaleState(display.Key, display.CurrentScalePercent))
-                .ToList();
+            var captured = state.DisplayScales
+                .Select(item => item.Key)
+                .ToHashSet(StringComparer.Ordinal);
+            state.DisplayScales.AddRange(displaySystem.GetDisplays()
+                .Where(display => captured.Add(display.Key))
+                .Select(display => new DisplayScaleState(display.Key, display.CurrentScalePercent)));
         }
         catch { }
     }
 
     private void RestoreCapturedDisplayState(OpenSynapseState state, bool clearCompleted, bool restoreScales)
+    {
+        RestoreAdvancedColors(state, clearCompleted);
+        RestoreBrightness(state, clearCompleted);
+        if (restoreScales) RestoreDisplayScales(state, clearCompleted);
+    }
+
+    private void RestoreAdvancedColors(OpenSynapseState state, bool clearCompleted)
     {
         foreach (var color in state.AdvancedColors)
             try { displaySystem.SetAdvancedColor(color.Key, color.Enabled); } catch { }
@@ -125,6 +149,10 @@ internal sealed class DisplayPolicy
             }
             catch { }
         }
+    }
+
+    private void RestoreBrightness(OpenSynapseState state, bool clearCompleted)
+    {
         if (state.OriginalBrightness is int brightness)
         {
             try { displaySystem.SetBrightness(brightness); } catch { }
@@ -137,7 +165,41 @@ internal sealed class DisplayPolicy
                 catch { }
             }
         }
-        if (restoreScales) RestoreDisplayScales(state, clearCompleted);
+    }
+
+    private void ApplyRefreshPolicy(OperatingMode mode, OpenSynapseConfig config)
+    {
+        try
+        {
+            switch (config.RefreshPolicy)
+            {
+                case RefreshPolicy.Unmanaged:
+                    displaySystem.RestoreRefresh();
+                    break;
+                case RefreshPolicy.Maximum:
+                    displaySystem.ApplyMaximumRefresh();
+                    break;
+                case RefreshPolicy.Fixed60:
+                    displaySystem.ApplyFixedRefresh(60);
+                    break;
+                case RefreshPolicy.Fixed120:
+                    displaySystem.ApplyFixedRefresh(120);
+                    break;
+                case RefreshPolicy.Fixed240:
+                    displaySystem.ApplyFixedRefresh(240);
+                    break;
+                case RefreshPolicy.FollowMode when mode == OperatingMode.Performance:
+                    displaySystem.ApplyMaximumRefresh();
+                    break;
+                case RefreshPolicy.FollowMode:
+                    displaySystem.ApplyFixedRefresh(
+                        mode == OperatingMode.Balanced
+                            ? config.BalancedRefreshRateHz
+                            : config.QuietRefreshRateHz);
+                    break;
+            }
+        }
+        catch { }
     }
 
     private void RestoreDisplayScales(OpenSynapseState state, bool clearCompleted)

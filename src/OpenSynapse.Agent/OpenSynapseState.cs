@@ -47,9 +47,11 @@ internal sealed class StateStore
             if (state.SchemaVersion > OpenSynapseState.CurrentSchemaVersion)
                 throw new NotSupportedException(
                     $"State schema {state.SchemaVersion} is newer than supported schema {OpenSynapseState.CurrentSchemaVersion}.");
+            var requiresMigration = state.SchemaVersion < OpenSynapseState.CurrentSchemaVersion;
             state.SchemaVersion = OpenSynapseState.CurrentSchemaVersion;
             state.AdvancedColors ??= [];
             state.DisplayScales ??= [];
+            if (requiresMigration) Save(state);
             return state;
         }
         catch (JsonException ex)

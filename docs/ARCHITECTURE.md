@@ -37,6 +37,8 @@ Runs without elevation. It displays status and sends typed requests to the agent
 
 Runs elevated for the current user. It owns mode selection, power-source reactions, state capture, restoration, Windows policy changes, device enumeration, HID commands, bounded local logs, and read-only diagnostics. The named pipe accepts only the current user and one bounded JSON request per connection.
 
+Display changes are debounced before the active policy is reapplied. Newly active displays are appended to the rollback snapshot before scaling or Advanced Color changes; existing snapshots are never replaced by hot-plug state.
+
 ### OpenSynapse.Core
 
 Contains shared request/status models, fail-safe supply classification, deterministic mode selection, and device packet construction/validation. Logic that can be independent of Windows or hardware belongs here and leaves a runnable test.

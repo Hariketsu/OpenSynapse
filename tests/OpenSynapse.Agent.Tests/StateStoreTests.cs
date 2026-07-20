@@ -35,6 +35,9 @@ public sealed class StateStoreTests
         Assert.IsNotNull(state.DisplayScales);
         Assert.IsEmpty(state.AdvancedColors);
         Assert.IsEmpty(state.DisplayScales);
+        StringAssert.Contains(
+            File.ReadAllText(statePath),
+            $"\"schemaVersion\":{OpenSynapseState.CurrentSchemaVersion}");
     }
 
     [TestMethod]

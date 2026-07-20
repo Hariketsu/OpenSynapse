@@ -93,7 +93,7 @@ The script verifies Performance/Balanced/Quiet application (Balanced when batter
 
 ## Configuration
 
-The agent creates `%LOCALAPPDATA%\OpenSynapse\config.json` with a versioned schema. It stores the selected mode, the Balanced battery threshold, internal/external display scaling, Balanced/Quiet brightness, and fixed refresh targets. Invalid or newer configuration is rejected without overwriting the file. Captured rollback data remains separate in `state.json`.
+The agent creates `%LOCALAPPDATA%\OpenSynapse\config.json` with a versioned schema. It stores the selected mode, the Balanced battery threshold, optional Advanced Color/brightness/scaling management, internal/external scaling, Balanced/Quiet brightness, and refresh policy (`FollowMode`, `Unmanaged`, `Maximum`, `Fixed60`, `Fixed120`, or `Fixed240`). Invalid or newer configuration is rejected without overwriting the file. Captured rollback data remains separate in `state.json`.
 
 ## Safety and privacy
 

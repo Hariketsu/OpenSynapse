@@ -7,9 +7,14 @@ namespace OpenSynapse.Agent;
 
 internal sealed class AgentServer(AgentController controller)
 {
+    private readonly object displayEventGate = new();
+    private CancellationTokenSource? displayDebounceCancellation;
+    private Task displayReapply = Task.CompletedTask;
+
     public async Task RunAsync(CancellationToken cancellationToken)
     {
         SystemEvents.PowerModeChanged += PowerModeChanged;
+        SystemEvents.DisplaySettingsChanged += DisplaySettingsChanged;
         controller.ApplyCurrentSelection(force: true);
         using var monitorCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         var monitor = MonitorSelectionAsync(monitorCancellation.Token);
@@ -31,6 +36,8 @@ internal sealed class AgentServer(AgentController controller)
         {
             monitorCancellation.Cancel();
             try { await monitor; } catch (OperationCanceledException) { }
+            SystemEvents.DisplaySettingsChanged -= DisplaySettingsChanged;
+            await CancelDisplayReapplyAsync();
             SystemEvents.PowerModeChanged -= PowerModeChanged;
         }
     }
@@ -45,6 +52,47 @@ internal sealed class AgentServer(AgentController controller)
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
         while (await timer.WaitForNextTickAsync(cancellationToken))
             controller.ApplyCurrentSelection();
+    }
+
+    private void DisplaySettingsChanged(object? sender, EventArgs args)
+    {
+        lock (displayEventGate)
+        {
+            displayDebounceCancellation?.Cancel();
+            var cancellation = new CancellationTokenSource();
+            displayDebounceCancellation = cancellation;
+            displayReapply = ReapplyDisplayAfterDelayAsync(cancellation);
+        }
+    }
+
+    private async Task ReapplyDisplayAfterDelayAsync(CancellationTokenSource cancellation)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(1), cancellation.Token);
+            controller.ReapplyDisplayPolicy();
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { }
+        finally
+        {
+            lock (displayEventGate)
+            {
+                if (ReferenceEquals(displayDebounceCancellation, cancellation))
+                    displayDebounceCancellation = null;
+            }
+            cancellation.Dispose();
+        }
+    }
+
+    private async Task CancelDisplayReapplyAsync()
+    {
+        Task pending;
+        lock (displayEventGate)
+        {
+            displayDebounceCancellation?.Cancel();
+            pending = displayReapply;
+        }
+        await pending;
     }
 
     private async Task<bool> HandleConnectionAsync(Stream stream, CancellationToken cancellationToken)

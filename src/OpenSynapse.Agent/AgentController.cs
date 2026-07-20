@@ -61,6 +61,39 @@ internal sealed class AgentController
         }
     }
 
+    public void ReapplyDisplayPolicy()
+    {
+        lock (gate)
+        {
+            if (shuttingDown) return;
+            OpenSynapseState? state = null;
+            try
+            {
+                var context = LoadContext();
+                state = context.State;
+                if (state.ActiveMode is not OperatingMode mode) return;
+                RequireAdministrator();
+                displays.Capture(mode, state, context.Config);
+                store.Save(state);
+                displays.Apply(mode, state, context.Config);
+                _ = log.TryWrite("display.reapplied", mode.ToString());
+            }
+            catch (Exception ex)
+            {
+                _ = log.TryWrite("display.reapply.failed", ex.Message);
+                Console.Error.WriteLine($"Display policy reapplication failed: {ex.Message}");
+            }
+            finally
+            {
+                if (state is not null)
+                {
+                    try { store.Save(state); }
+                    catch (Exception ex) { _ = log.TryWrite("display.state-save.failed", ex.Message); }
+                }
+            }
+        }
+    }
+
     private AgentResponse Handle(AgentRequest request)
     {
         if (request.Operation == AgentOperation.SelfTest) return RunSelfTest();
@@ -163,7 +196,7 @@ internal sealed class AgentController
         try
         {
             state.OriginalPowerPlan ??= power.GetActiveGuid();
-            displays.Capture(mode, state);
+            displays.Capture(mode, state, config);
             store.Save(state);
             power.Apply(mode, state);
             displays.Apply(mode, state, config);
