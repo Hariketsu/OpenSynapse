@@ -17,11 +17,16 @@ jobs:
           global-json-file: global.json
       - shell: powershell
         run: |
-          $tokens = $null
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile("$PWD\scripts\Test-Milestones.ps1", [ref]$tokens, [ref]$errors) | Out-Null
-          if ($errors) { throw ($errors | Out-String) }
+          foreach ($script in Get-ChildItem "$PWD\scripts" -File | Where-Object { $_.Extension -in @('.ps1', '.psm1') }) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors) { throw ($errors | Out-String) }
+          }
+          & "$PWD\scripts\Test-InstallerDefinitions.ps1"
       - run: dotnet restore OpenSynapse.sln
       - run: dotnet format OpenSynapse.sln --verify-no-changes --no-restore
       - run: dotnet build OpenSynapse.sln --configuration Release --no-restore
-      - run: dotnet test tests/OpenSynapse.Core.Tests/OpenSynapse.Core.Tests.csproj --configuration Release --no-build
+      - run: dotnet test OpenSynapse.sln --configuration Release --no-build --no-restore
+      - shell: powershell
+        run: .\scripts\Publish-OpenSynapse.ps1

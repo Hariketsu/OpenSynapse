@@ -22,8 +22,8 @@ The roadmap describes validation gates, not delivery dates. A capability moves f
 
 ## First public alpha
 
-- Windows installation, elevation, startup, single-instance, and uninstall lifecycle.
-- Removal of OpenSynapse-managed power plans during uninstall.
+- Windows installation, elevation, startup, single-instance, and uninstall lifecycle (implemented; live validation pending).
+- Verified removal of OpenSynapse-managed power plans during uninstall (implemented; live validation pending).
 - Versioned configuration/state schemas, bounded diagnostic logs, and read-only self-test (implemented; target-Windows validation ongoing).
 - A documented elevated-agent threat model.
 - Repeatable Windows integration tests and a maintained compatibility matrix.

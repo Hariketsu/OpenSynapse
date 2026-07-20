@@ -25,7 +25,10 @@ internal sealed record PowerPlanSetting(
 internal sealed partial class PowerPlanManager
 {
     private const string BalancedScheme = "381b4222-f694-41f0-9685-ff5bb260df2e";
-    private readonly string powerCfg = Path.Combine(Environment.SystemDirectory, "powercfg.exe");
+    private const string PerformancePlanName = "OpenSynapse Performance";
+    private const string BalancedPlanName = "OpenSynapse Balanced";
+    private const string QuietPlanName = "OpenSynapse Quiet";
+    private readonly Func<IReadOnlyList<string>, string> run;
 
     internal static IReadOnlyList<PowerPlanSetting> PolicySettings { get; } =
     [
@@ -43,6 +46,17 @@ internal sealed partial class PowerPlanManager
         new("238c9fa8-0aad-41ed-83f4-97be242c8f20", "9d7815a6-7ee4-497e-8888-515a05f02364", new(0, 3600), new(3600, 1800), new(1800, 900), false),
         new("4f971e89-eebd-4455-a8de-9e59040e7347", "5ca83367-6e45-459f-a27b-476b1d01c936", new(1, 1), new(1, 2), new(1, 2), false)
     ];
+
+    public PowerPlanManager()
+    {
+        var powerCfg = Path.Combine(Environment.SystemDirectory, "powercfg.exe");
+        run = arguments => ProcessRunner.Run(powerCfg, arguments.ToArray());
+    }
+
+    internal PowerPlanManager(Func<IReadOnlyList<string>, string> run)
+    {
+        this.run = run;
+    }
 
     public string GetActiveGuid() => ParseGuid(Run("/getactivescheme"));
 
@@ -76,23 +90,31 @@ internal sealed partial class PowerPlanManager
         state.OriginalPowerPlan = null;
     }
 
+    public void DeleteManagedPlans(OpenSynapseState state)
+    {
+        var active = GetActiveGuid();
+        state.PerformancePowerPlan = DeleteManagedPlan(state.PerformancePowerPlan, active, PerformancePlanName);
+        state.BalancedPowerPlan = DeleteManagedPlan(state.BalancedPowerPlan, active, BalancedPlanName);
+        state.QuietPowerPlan = DeleteManagedPlan(state.QuietPowerPlan, active, QuietPlanName);
+    }
+
     private void EnsurePlans(OpenSynapseState state)
     {
-        if (!Exists(state.PerformancePowerPlan))
+        if (!IsManagedPlan(state.PerformancePowerPlan, PerformancePlanName))
         {
-            var plan = Duplicate("OpenSynapse Performance");
+            var plan = Duplicate(PerformancePlanName);
             Configure(plan, OperatingMode.Performance);
             state.PerformancePowerPlan = plan;
         }
-        if (!Exists(state.BalancedPowerPlan))
+        if (!IsManagedPlan(state.BalancedPowerPlan, BalancedPlanName))
         {
-            var plan = Duplicate("OpenSynapse Balanced");
+            var plan = Duplicate(BalancedPlanName);
             Configure(plan, OperatingMode.Balanced);
             state.BalancedPowerPlan = plan;
         }
-        if (!Exists(state.QuietPowerPlan))
+        if (!IsManagedPlan(state.QuietPowerPlan, QuietPlanName))
         {
-            var plan = Duplicate("OpenSynapse Quiet");
+            var plan = Duplicate(QuietPlanName);
             Configure(plan, OperatingMode.Quiet);
             state.QuietPowerPlan = plan;
         }
@@ -122,7 +144,29 @@ internal sealed partial class PowerPlanManager
     private bool Exists(string? guid) => !string.IsNullOrWhiteSpace(guid)
         && Run("/list").Contains(guid, StringComparison.OrdinalIgnoreCase);
 
-    private string Run(params string[] arguments) => ProcessRunner.Run(powerCfg, arguments);
+    private bool IsManagedPlan(string? guid, string expectedName)
+    {
+        if (string.IsNullOrWhiteSpace(guid)) return false;
+        return Run("/list")
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Any(line => line.Contains(guid, StringComparison.OrdinalIgnoreCase)
+                && line.Contains($"({expectedName})", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private string? DeleteManagedPlan(string? guid, string active, string expectedName)
+    {
+        if (!Exists(guid)) return null;
+        if (!IsManagedPlan(guid, expectedName))
+            throw new InvalidOperationException(
+                $"Power plan {guid} is not marked as {expectedName}; refusing to delete it.");
+        if (guid!.Equals(active, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"Cannot delete active managed power plan {guid}.");
+        Run("/delete", guid);
+        if (Exists(guid)) throw new InvalidOperationException($"Managed power plan {guid} was not deleted.");
+        return null;
+    }
+
+    private string Run(params string[] arguments) => run(arguments);
 
     private static string ParseGuid(string text)
     {

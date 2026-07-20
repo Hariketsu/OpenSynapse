@@ -108,6 +108,8 @@ internal sealed class AgentServer(AgentController controller)
                 throw new InvalidDataException("Request must be one JSON line no longer than 4096 characters.");
             request = JsonSerializer.Deserialize<AgentRequest>(line, AgentJson.Options)
                 ?? throw new InvalidDataException("Request is empty.");
+            if (!IsPipeOperationAllowed(request.Operation))
+                throw new InvalidDataException("Uninstall cleanup is only available to the elevated maintenance CLI.");
             response = await controller.HandleAsync(request);
         }
         catch (Exception ex)
@@ -117,4 +119,7 @@ internal sealed class AgentServer(AgentController controller)
         await writer.WriteLineAsync(JsonSerializer.Serialize(response, AgentJson.Options));
         return response.Success && request?.Operation == AgentOperation.Shutdown;
     }
+
+    internal static bool IsPipeOperationAllowed(AgentOperation operation) =>
+        operation != AgentOperation.UninstallCleanup;
 }

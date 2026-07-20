@@ -151,6 +151,25 @@ internal sealed class AgentController
                 }
                 finally { store.Save(state); }
 
+            case AgentOperation.UninstallCleanup:
+                RequireAdministrator();
+                try
+                {
+                    var displayRestored = displays.Restore(state);
+                    power.Restore(state);
+                    if (!displayRestored)
+                        throw new InvalidOperationException(
+                            "Display restoration remains pending; uninstall cleanup was stopped for a later retry.");
+                    state.ActiveMode = null;
+                    power.DeleteManagedPlans(state);
+                    _ = log.TryWrite("uninstall.cleanup", "Restored captured state and removed managed power plans.");
+                    return new AgentResponse(
+                        true,
+                        "Restored captured state and removed managed power plans.",
+                        GetStatus(state, config));
+                }
+                finally { store.Save(state); }
+
             case AgentOperation.SetMouseDpi:
                 deathAdder.SetDpi(
                     request.DpiX ?? throw new ArgumentException("DpiX is required."),

@@ -33,6 +33,8 @@ flowchart LR
 
 Runs without elevation. It displays status and sends typed requests to the agent. Closing the window hides it; explicit exit requests restoration and agent shutdown. It never writes Windows policy or HID state directly.
 
+The App and serving Agent each hold a per-user named single-instance lease. A second App launch signals the existing window to activate; a second serving Agent exits without competing for policy ownership.
+
 ### OpenSynapse.Agent
 
 Runs elevated for the current user. It owns mode selection, power-source reactions, state capture, restoration, Windows policy changes, device enumeration, HID commands, bounded local logs, and read-only diagnostics. The named pipe accepts only the current user and one bounded JSON request per connection.
@@ -69,9 +71,10 @@ The Captured State is not deleted merely because a restore was attempted. Each v
 
 ## Trust boundaries
 
-- The UI-to-agent pipe crosses a Windows integrity boundary. Access is restricted to the current user; JSON enums, sizes, ranges, operations, and device identities are validated.
+- The UI-to-agent pipe crosses a Windows integrity boundary. Access is restricted to the current user; JSON enums, sizes, ranges, operations, and device identities are validated. Destructive uninstall cleanup is excluded from the pipe and is available only through the elevated maintenance CLI.
 - The configuration and state files are current-user writable and are not sources of arbitrary executable commands or file paths. They use independent schemas so user policy cannot erase rollback evidence.
 - Automatic Performance requires a high-power AC classification. Adapter probing is read-only, cached, and falls back to Quiet when unavailable or ambiguous.
+- Uninstall cleanup is ordered: confirmed display/power restoration, GUID-and-name verification of every managed power plan, verified plan deletion, then task/shortcut/file removal. Failure preserves the installation for retry.
 - HID writes require Razer VID `1532`, an explicitly supported PID, and Consumer usage page `0x0C`.
 - Unknown status, response mismatch, checksum failure, and unsupported values fail closed.
 - Firmware and embedded-controller writes are outside the boundary.

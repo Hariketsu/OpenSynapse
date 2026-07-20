@@ -93,6 +93,7 @@ public enum AgentOperation
     Apply,
     SetSelection,
     Restore,
+    UninstallCleanup,
     ListDevices,
     SetMouseDpi,
     SetMousePollingRate,

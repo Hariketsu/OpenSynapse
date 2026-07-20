@@ -137,6 +137,8 @@ public partial class MainWindow : Window
         Activate();
     }
 
+    internal void ActivateFromExternalRequest() => ShowWindow();
+
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
         if (exiting) return;

@@ -80,6 +80,23 @@ Run read-only diagnostics from any terminal:
 dotnet run --project src/OpenSynapse.Agent -- self-test
 ```
 
+### Publish and install
+
+Create framework-dependent Windows binaries, then run the installer from an elevated PowerShell terminal belonging to the target user:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\Publish-OpenSynapse.ps1
+powershell -ExecutionPolicy Bypass -File scripts\Install-OpenSynapse.ps1
+```
+
+The installer copies Agent/App outputs under `%ProgramFiles%\OpenSynapse`, registers a delayed per-user elevated Agent task, and creates a Start menu shortcut for the non-elevated App. To uninstall, restore captured state, remove managed power plans, and delete installed files:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\Uninstall-OpenSynapse.ps1
+```
+
+Use `-KeepUserData` to retain `%LOCALAPPDATA%\OpenSynapse`. The uninstaller stops before deleting anything if state restoration or managed-plan cleanup cannot be confirmed. The install/uninstall definitions are tested, but a live installation remains a target-Windows validation gate.
+
 On a disposable or fully understood Windows configuration, run the reversible elevated smoke test:
 
 ```powershell
