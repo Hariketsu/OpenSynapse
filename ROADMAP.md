@@ -13,7 +13,7 @@ The roadmap describes validation gates, not delivery dates. A capability moves f
 
 - [x] .NET solution, Windows CI, tests, license, and project documentation.
 - [x] Non-elevated WPF control panel and per-user elevated agent.
-- [x] Auto, Performance, and Quiet policy selection.
+- [x] Adapter-aware Auto, Performance, Balanced, and Quiet policy selection.
 - [x] Captured state and power-plan rollback.
 - [x] DeathAdder V3 Pro discovery, status, DPI, and standard polling commands.
 - [ ] Run the reversible Windows policy smoke test on the target machine.

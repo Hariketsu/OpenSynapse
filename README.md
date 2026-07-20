@@ -23,7 +23,7 @@ OpenSynapse currently implements the M0–M3 development slice. Implementation d
 
 | Area | Current capability | Maturity |
 | --- | --- | --- |
-| Windows policies | Adapter-aware Auto, Performance, and Quiet selection; power plans; refresh rate; Advanced Color/HDR; internal brightness; display scaling | Implemented, target-Windows validation pending |
+| Windows policies | Adapter-aware Auto, Performance, Balanced, and Quiet selection; power plans; refresh rate; Advanced Color/HDR; internal brightness; display scaling | Implemented, target-Windows validation pending |
 | State restoration | Atomic captured state and verified power-plan rollback | Implemented, target-Windows validation pending |
 | Desktop control | Non-elevated WPF panel and tray UI connected to a per-user elevated agent | Implemented, target-Windows validation pending |
 | Razer mouse | Discovery, status, DPI, and standard-receiver polling control | Experimental |
@@ -83,7 +83,7 @@ powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1
 powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1 -TestMouseWrites
 ```
 
-The script verifies Performance/Quiet application, named-pipe lifecycle, agent shutdown, power-plan rollback, and captured-state cleanup. The mouse option requires a readable DeathAdder V3 Pro and does not intentionally select new values.
+The script verifies Performance/Balanced/Quiet application (Balanced when battery is at least 50%), named-pipe lifecycle, agent shutdown, power-plan rollback, and captured-state cleanup. The mouse option requires a readable DeathAdder V3 Pro and does not intentionally select new values.
 
 ## Safety and privacy
 

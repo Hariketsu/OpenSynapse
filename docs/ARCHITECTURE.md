@@ -44,10 +44,16 @@ stateDiagram-v2
     [*] --> Unmanaged
     Unmanaged --> Captured: first policy application
     Captured --> Performance: apply Performance
+    Captured --> Balanced: apply Balanced
     Captured --> Quiet: apply Quiet
+    Performance --> Balanced: selection changes
     Performance --> Quiet: selection or power source changes
+    Balanced --> Performance: selection changes
+    Balanced --> Quiet: selection or battery below 50%
     Quiet --> Performance: selection or power source changes
+    Quiet --> Balanced: eligible selection
     Performance --> Restoring: restore or shutdown
+    Balanced --> Restoring: restore or shutdown
     Quiet --> Restoring: restore or shutdown
     Restoring --> Unmanaged: confirmed restoration
     Restoring --> Captured: any restoration remains pending

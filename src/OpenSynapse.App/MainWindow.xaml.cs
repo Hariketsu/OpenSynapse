@@ -48,6 +48,7 @@ public partial class MainWindow : Window
 
     private async void Auto_Click(object sender, RoutedEventArgs e) => await SelectAsync(ModeSelection.Auto);
     private async void Performance_Click(object sender, RoutedEventArgs e) => await SelectAsync(ModeSelection.Performance);
+    private async void Balanced_Click(object sender, RoutedEventArgs e) => await SelectAsync(ModeSelection.Balanced);
     private async void Quiet_Click(object sender, RoutedEventArgs e) => await SelectAsync(ModeSelection.Quiet);
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
 
@@ -64,16 +65,11 @@ public partial class MainWindow : Window
         await SendAsync(new AgentRequest(AgentOperation.SetMousePollingRate, PollingRate: hz));
     }
 
-    private async Task ApplySelectionAsync()
-    {
-        ModeText.Text = $"Selection: {selection}";
-        await SendAsync(new AgentRequest(AgentOperation.SetSelection, Selection: selection));
-    }
-
     private async Task SelectAsync(ModeSelection value)
     {
-        selection = value;
-        await ApplySelectionAsync();
+        ModeText.Text = $"Selection: {value}";
+        if (!await SendAsync(new AgentRequest(AgentOperation.SetSelection, Selection: value)))
+            await RefreshAsync();
     }
 
     private async Task RefreshAsync() => await SendAsync(new AgentRequest(AgentOperation.Status));

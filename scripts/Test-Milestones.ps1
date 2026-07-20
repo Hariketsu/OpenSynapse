@@ -61,6 +61,16 @@ try {
         throw 'Performance mode verification failed.'
     }
 
+    if ($status.Status.BatteryPercent -ge 50) {
+        $balanced = Invoke-Agent apply Balanced
+        if (-not $balanced.Success -or $balanced.Status.ActiveMode -ne 'Balanced') {
+            throw 'Balanced mode verification failed.'
+        }
+    }
+    else {
+        Write-Warning 'Balanced mode verification skipped because battery is below 50% or unavailable.'
+    }
+
     $quiet = Invoke-Agent apply Quiet
     if (-not $quiet.Success -or $quiet.Status.ActiveMode -ne 'Quiet') {
         throw 'Quiet mode verification failed.'

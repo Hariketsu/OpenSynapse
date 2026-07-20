@@ -36,7 +36,7 @@
             <StackPanel>
                 <StackPanel Orientation="Horizontal">
                     <Button Content="Auto" Click="Auto_Click"/><Button Content="Performance" Click="Performance_Click"/>
-                    <Button Content="Quiet" Click="Quiet_Click"/>
+                    <Button Content="Balanced" Click="Balanced_Click"/><Button Content="Quiet" Click="Quiet_Click"/>
                 </StackPanel>
                 <TextBlock x:Name="ModeText" Margin="0,12,0,0" Foreground="#C6CBC8"/>
             </StackPanel>

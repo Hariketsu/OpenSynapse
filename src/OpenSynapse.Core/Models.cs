@@ -3,6 +3,7 @@ namespace OpenSynapse.Core;
 public enum OperatingMode
 {
     Performance,
+    Balanced,
     Quiet
 }
 
@@ -10,6 +11,7 @@ public enum ModeSelection
 {
     Auto,
     Performance,
+    Balanced,
     Quiet
 }
 
@@ -53,9 +55,16 @@ public static class SupplyClassifier
 
 public static class ModeSelector
 {
+    public const int BalancedBatteryThresholdPercent = 50;
+
+    public static bool IsBalancedEligible(PowerSnapshot power) =>
+        power.BatteryPercent >= BalancedBatteryThresholdPercent;
+
     public static OperatingMode Resolve(ModeSelection selection, PowerSnapshot power) => selection switch
     {
         ModeSelection.Performance => OperatingMode.Performance,
+        ModeSelection.Balanced when IsBalancedEligible(power) => OperatingMode.Balanced,
+        ModeSelection.Balanced => OperatingMode.Quiet,
         ModeSelection.Quiet => OperatingMode.Quiet,
         _ when power.SupplyType == SupplyType.HighPowerAc => OperatingMode.Performance,
         _ => OperatingMode.Quiet

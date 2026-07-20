@@ -62,6 +62,26 @@ public sealed class DisplayPolicyTests
     }
 
     [TestMethod]
+    public void BalancedAppliesLowPowerDisplayPolicy()
+    {
+        var displaySystem = new FakeDisplaySystem
+        {
+            Brightness = 82
+        };
+        displaySystem.Displays["internal"] = (100, true);
+        displaySystem.Colors["hdr"] = (true, true);
+        var state = new OpenSynapseState();
+        var policy = new DisplayPolicy(displaySystem);
+
+        policy.Capture(OperatingMode.Balanced, state);
+        policy.Apply(OperatingMode.Balanced, state);
+
+        Assert.AreEqual(60, displaySystem.Brightness);
+        Assert.IsFalse(displaySystem.Colors["hdr"].Enabled);
+        CollectionAssert.AreEqual(new[] { 120 }, displaySystem.FixedRefreshApplications);
+    }
+
+    [TestMethod]
     public void RestoreClearsOnlyStateConfirmedByReadback()
     {
         var displaySystem = new FakeDisplaySystem
@@ -126,6 +146,7 @@ public sealed class DisplayPolicyTests
         public Dictionary<string, (bool Supported, bool Enabled)> Colors { get; } = [];
         public Dictionary<string, (int Scale, bool IsInternal)> Displays { get; } = [];
         public List<(string Key, int Percent)> ScaleWrites { get; } = [];
+        public List<int> FixedRefreshApplications { get; } = [];
         public int? Brightness { get; set; }
         public int MaximumRefreshApplications { get; private set; }
         public bool ThrowOnRefreshRestore { get; init; }
@@ -157,9 +178,7 @@ public sealed class DisplayPolicyTests
 
         public void ApplyMaximumRefresh() => MaximumRefreshApplications++;
 
-        public void ApplyQuietRefresh(int targetHz)
-        {
-        }
+        public void ApplyFixedRefresh(int targetHz) => FixedRefreshApplications.Add(targetHz);
 
         public void RestoreRefresh()
         {

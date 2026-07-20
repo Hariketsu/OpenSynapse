@@ -22,7 +22,7 @@ internal sealed class AgentController
         }
     }
 
-    public void ApplyCurrentSelection()
+    public void ApplyCurrentSelection(bool force = false)
     {
         lock (gate)
         {
@@ -31,7 +31,14 @@ internal sealed class AgentController
             {
                 var state = store.Load();
                 var powerSnapshot = powerSupply.GetSnapshot();
-                ApplyMode(ModeSelector.Resolve(state.Selection, powerSnapshot), state, powerSnapshot);
+                if (state.Selection == ModeSelection.Balanced && !ModeSelector.IsBalancedEligible(powerSnapshot))
+                {
+                    state.Selection = ModeSelection.Quiet;
+                    store.Save(state);
+                }
+                var desiredMode = ModeSelector.Resolve(state.Selection, powerSnapshot);
+                if (!force && state.ActiveMode == desiredMode) return;
+                ApplyMode(desiredMode, state, powerSnapshot);
             }
             catch (Exception ex)
             {
@@ -50,12 +57,20 @@ internal sealed class AgentController
                 return new AgentResponse(true, "OK", GetStatus(state));
 
             case AgentOperation.Apply:
-                return ApplyMode(request.Mode ?? throw new ArgumentException("Mode is required."), state);
+                var mode = request.Mode ?? throw new ArgumentException("Mode is required.");
+                var applyPowerSnapshot = powerSupply.GetSnapshot();
+                EnsureBalancedEligible(mode, applyPowerSnapshot);
+                return ApplyMode(mode, state, applyPowerSnapshot);
 
             case AgentOperation.SetSelection:
-                state.Selection = request.Selection ?? throw new ArgumentException("Selection is required.");
-                store.Save(state);
+                var selection = request.Selection ?? throw new ArgumentException("Selection is required.");
                 var powerSnapshot = powerSupply.GetSnapshot();
+                if (selection == ModeSelection.Balanced && !ModeSelector.IsBalancedEligible(powerSnapshot))
+                    throw new InvalidOperationException(
+                        $"Balanced mode requires at least {ModeSelector.BalancedBatteryThresholdPercent}% battery; "
+                        + $"current charge is {powerSnapshot.BatteryPercent?.ToString() ?? "unavailable"}%.");
+                state.Selection = selection;
+                store.Save(state);
                 return ApplyMode(ModeSelector.Resolve(state.Selection, powerSnapshot), state, powerSnapshot);
 
             case AgentOperation.Restore:
@@ -137,5 +152,13 @@ internal sealed class AgentController
         using var identity = WindowsIdentity.GetCurrent();
         if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
             throw new UnauthorizedAccessException("Applying or restoring Windows policies requires an elevated OpenSynapse.Agent.");
+    }
+
+    private static void EnsureBalancedEligible(OperatingMode mode, PowerSnapshot powerSnapshot)
+    {
+        if (mode != OperatingMode.Balanced || ModeSelector.IsBalancedEligible(powerSnapshot)) return;
+        throw new InvalidOperationException(
+            $"Balanced mode requires at least {ModeSelector.BalancedBatteryThresholdPercent}% battery; "
+            + $"current charge is {powerSnapshot.BatteryPercent?.ToString() ?? "unavailable"}%.");
     }
 }

@@ -518,7 +518,7 @@ namespace PowerPilotNative
             return changed;
         }
 
-        public static int ApplyQuietRefresh(int targetHz)
+        public static int ApplyFixedRefresh(int targetHz)
         {
             int changed = 0;
             foreach (DISPLAY_DEVICE device in GetActiveDevices())

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using OpenSynapse.Core;
 
 namespace OpenSynapse.Agent.Tests;
 
@@ -57,5 +58,24 @@ public sealed class StateStoreTests
         Assert.AreEqual(
             OpenSynapseState.CurrentSchemaVersion,
             document.RootElement.GetProperty("schemaVersion").GetInt32());
+    }
+
+    [TestMethod]
+    public void SaveAndLoadRoundTripsBalancedState()
+    {
+        var expected = new OpenSynapseState
+        {
+            Selection = ModeSelection.Balanced,
+            ActiveMode = OperatingMode.Balanced,
+            BalancedPowerPlan = "11111111-2222-3333-4444-555555555555"
+        };
+        var store = new StateStore(statePath);
+
+        store.Save(expected);
+        var actual = store.Load();
+
+        Assert.AreEqual(ModeSelection.Balanced, actual.Selection);
+        Assert.AreEqual(OperatingMode.Balanced, actual.ActiveMode);
+        Assert.AreEqual(expected.BalancedPowerPlan, actual.BalancedPowerPlan);
     }
 }

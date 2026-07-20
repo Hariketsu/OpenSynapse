@@ -22,4 +22,19 @@ public sealed class ModeSelectorTests
 
         Assert.AreEqual(expected, ModeSelector.Resolve(selection, snapshot));
     }
+
+    [DataRow(49, OperatingMode.Quiet)]
+    [DataRow(50, OperatingMode.Balanced)]
+    [DataRow(100, OperatingMode.Balanced)]
+    [DataRow(null, OperatingMode.Quiet)]
+    [TestMethod]
+    public void BalancedRequiresAtLeastFiftyPercentBattery(
+        int? batteryPercent,
+        OperatingMode expected)
+    {
+        var snapshot = new PowerSnapshot(PowerSource.Ac, SupplyType.LowPowerPd, batteryPercent);
+
+        Assert.AreEqual(expected, ModeSelector.Resolve(ModeSelection.Balanced, snapshot));
+        Assert.AreEqual(expected == OperatingMode.Balanced, ModeSelector.IsBalancedEligible(snapshot));
+    }
 }

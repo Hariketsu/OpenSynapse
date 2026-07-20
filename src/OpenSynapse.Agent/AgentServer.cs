@@ -10,7 +10,9 @@ internal sealed class AgentServer(AgentController controller)
     public async Task RunAsync(CancellationToken cancellationToken)
     {
         SystemEvents.PowerModeChanged += PowerModeChanged;
-        controller.ApplyCurrentSelection();
+        controller.ApplyCurrentSelection(force: true);
+        using var monitorCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var monitor = MonitorSelectionAsync(monitorCancellation.Token);
         try
         {
             while (!cancellationToken.IsCancellationRequested)
@@ -25,12 +27,24 @@ internal sealed class AgentServer(AgentController controller)
                 if (await HandleConnectionAsync(pipe, cancellationToken)) break;
             }
         }
-        finally { SystemEvents.PowerModeChanged -= PowerModeChanged; }
+        finally
+        {
+            monitorCancellation.Cancel();
+            try { await monitor; } catch (OperationCanceledException) { }
+            SystemEvents.PowerModeChanged -= PowerModeChanged;
+        }
     }
 
     private void PowerModeChanged(object sender, PowerModeChangedEventArgs args)
     {
-        if (args.Mode == PowerModes.StatusChange) _ = Task.Run(controller.ApplyCurrentSelection);
+        if (args.Mode == PowerModes.StatusChange) _ = Task.Run(() => controller.ApplyCurrentSelection());
+    }
+
+    private async Task MonitorSelectionAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
+        while (await timer.WaitForNextTickAsync(cancellationToken))
+            controller.ApplyCurrentSelection();
     }
 
     private async Task<bool> HandleConnectionAsync(Stream stream, CancellationToken cancellationToken)

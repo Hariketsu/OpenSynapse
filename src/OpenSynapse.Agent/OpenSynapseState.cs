@@ -5,12 +5,13 @@ namespace OpenSynapse.Agent;
 
 internal sealed class OpenSynapseState
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public ModeSelection Selection { get; set; } = ModeSelection.Auto;
     public string? OriginalPowerPlan { get; set; }
     public string? PerformancePowerPlan { get; set; }
+    public string? BalancedPowerPlan { get; set; }
     public string? QuietPowerPlan { get; set; }
     public OperatingMode? ActiveMode { get; set; }
     public int? OriginalBrightness { get; set; }

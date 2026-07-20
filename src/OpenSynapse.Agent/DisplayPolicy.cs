@@ -18,10 +18,10 @@ internal sealed class DisplayPolicy
     public void Capture(OperatingMode mode, OpenSynapseState state)
     {
         CaptureDisplayScales(state);
-        if (mode == OperatingMode.Quiet) CaptureForQuiet(state);
+        if (mode != OperatingMode.Performance) CaptureForLowPower(state);
     }
 
-    public void CaptureForQuiet(OpenSynapseState state)
+    private void CaptureForLowPower(OpenSynapseState state)
     {
         if (state.AdvancedColors.Count == 0)
         {
@@ -42,13 +42,13 @@ internal sealed class DisplayPolicy
 
     public void Apply(OperatingMode mode, OpenSynapseState state)
     {
-        if (mode == OperatingMode.Quiet)
+        if (mode != OperatingMode.Performance)
         {
-            CaptureForQuiet(state);
+            CaptureForLowPower(state);
             foreach (var color in state.AdvancedColors)
                 try { displaySystem.SetAdvancedColor(color.Key, false); } catch { }
-            try { displaySystem.SetBrightness(40); } catch { }
-            try { displaySystem.ApplyQuietRefresh(60); } catch { }
+            try { displaySystem.SetBrightness(mode == OperatingMode.Balanced ? 60 : 40); } catch { }
+            try { displaySystem.ApplyFixedRefresh(mode == OperatingMode.Balanced ? 120 : 60); } catch { }
         }
         else
         {
