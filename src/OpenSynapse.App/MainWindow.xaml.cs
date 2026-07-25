@@ -233,7 +233,16 @@ public partial class MainWindow : Window
         {
             var cpu = status.Telemetry.CpuPercent >= 0 ? $"CPU {status.Telemetry.CpuPercent:0.#}%" : "CPU unavailable";
             var gpu = status.Telemetry.GpuPercent >= 0 ? $"GPU {status.Telemetry.GpuPercent:0.#}%" : "GPU unavailable";
-            TelemetryText.Text = $"{cpu} · {gpu} · foreground {status.Telemetry.ForegroundProcess ?? "none"}";
+            var dgpu = status.Telemetry.DgpuPercent >= 0
+                ? $"dGPU {status.Telemetry.DgpuPercent:0.#}% / {status.Telemetry.DgpuDedicatedMb:0.#} MB"
+                : "dGPU unavailable";
+            var ema = status.Telemetry.BatteryDischargeEmaWatts is double emaWatts
+                ? $"battery EMA {emaWatts:0.#} W"
+                : "battery trend unavailable";
+            var leak = status.SmartAutomation?.DgpuActivitySuspected == true
+                ? $" · dGPU activity suspected ({status.SmartAutomation.DgpuActivityConfidence})"
+                : string.Empty;
+            TelemetryText.Text = $"{cpu} · {gpu} · {dgpu} · {ema} · foreground {status.Telemetry.ForegroundProcess ?? "none"}{leak}";
         }
         TemporaryText.Text = status.TemporaryMode is { } temporary
             ? temporary.UntilPowerChange

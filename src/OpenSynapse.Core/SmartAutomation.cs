@@ -126,6 +126,10 @@ public sealed class SmartAutomationState
     public SupplyType LastSupplyType { get; set; } = SupplyType.Unknown;
     public string LastReason { get; set; } = "waiting for first telemetry sample";
     public string? MatchedRule { get; set; }
+    public int DgpuLeakSamples { get; set; }
+    public bool DgpuActivitySuspected { get; set; }
+    public string DgpuActivityConfidence { get; set; } = "None";
+    public List<GpuConsumerSnapshot> DgpuConsumers { get; set; } = [];
 }
 
 public sealed record SmartAutomationDecision(

@@ -9,7 +9,7 @@
 
 OpenSynapse 已完成核心电源策略、Smart Auto、临时模式、应用规则、显示策略、五页 UI、诊断导出、安装启动和原有 DeathAdder V3 Pro HID 路径的主要移植，并将产品名、任务栏 AppUserModelID、界面文案和发布图标改为 OpenSynapse。
 
-目前不能宣称“所有功能在目标机器上无差错”。原因是部分功能必须在管理员权限、目标显示器和真实雷蛇鼠标上实测；另外 2.4.1 的 GPU 利用率/独显泄漏诊断、Quiet 进程/厂商服务维护和 30 秒 JSONL 遥测历史仍未完全移植。
+目前不能宣称“所有功能在目标机器上无差错”。原因是部分功能必须在管理员权限、目标显示器和真实雷蛇鼠标上实测；Quiet 进程/厂商服务维护仍按安全边界暂不主动执行。
 
 ## 功能映射
 
@@ -20,7 +20,7 @@ OpenSynapse 已完成核心电源策略、Smart Auto、临时模式、应用规�
 | 25 项电源策略及 Hyper/Quiet 专属项 | 已移植 | 包含效率类核心、Boost、EPP、核心停放、唤醒计时器和待机网络策略。 |
 | Quiet 动态 CPU 上限 | 已移植 | 电池按 75/65/60% 区间写入 Quiet DC 最大状态。 |
 | Smart Auto 应用/CPU/全屏防抖 | 已移植 | Core 纯逻辑引擎；支持性能/生产力名单、全屏保护、最短驻留和退出迟滞。 |
-| Smart Auto GPU 负载判定 | 部分移植 | 接口字段和决策路径已存在，但当前 GPU 利用率提供程序返回不可用，不能据此进行 GPU 升档。 |
+| Smart Auto GPU 负载判定 | 已移植 | GPU Performance Counter/DXGI 由后台线程缓存，策略循环可使用整机 GPU 负载；不可用时回退到 CPU/窗口信号。 |
 | 应用规则 Foreground/Fullscreen/Running | 已移植 | 本地配置、边界校验、UI 增删改；Running 规则才枚举进程。 |
 | 临时模式 30/60/120 分钟/直到供电变化 | 已移植 | 到期或供电分类变化后恢复持久选择；Balance 仍受电量锁定。 |
 | HDR、亮度、缩放 | 已移植 | 有捕获、热插拔追加捕获和恢复；Quiet 电池亮度上限为 35/30/20%。 |
@@ -29,9 +29,9 @@ OpenSynapse 已完成核心电源策略、Smart Auto、临时模式、应用规�
 | Quiet 唤醒设备 | 已移植 | 默认关闭、精确名称 allowlist；不使用 wildcard 误伤设备。 |
 | Quiet 高耗电进程维护 | 未完成 | 当前仍不主动停止用户进程。 |
 | Quiet ASUS/Armoury 服务维护 | 未完成 | 当前仍不控制厂商服务，避免无明确授权造成系统影响。 |
-| 电池 Class API 瞬时功率/容量/估算 | 部分移植 | 已接入 Windows `SystemBatteryState`，提供瞬时放电/充电和剩余容量；尚未实现原型的 EMA/10 分钟历史。 |
-| GPU Performance Counter/dGPU 泄漏诊断 | 未完成 | 当前状态显示 GPU unavailable，不会用 `nvidia-smi` 高频唤醒独显。 |
-| 30 秒 telemetry.jsonl 轮转历史 | 未完成 | 诊断 ZIP 已包含配置、状态、电源快照、powercfg 和日志，但没有原型完整的遥测历史。 |
+| 电池 Class API 瞬时功率/容量/估算 | 已移植 | 使用 Battery Class API，失败时回退 `SystemBatteryState`；提供电压、瞬时功率、2 分钟 EMA、10 分钟平均和续航估算。 |
+| GPU Performance Counter/dGPU 泄漏诊断 | 已移植 | 后台读取 GPU Engine/GPU Process Memory，并通过 DXGI LUID 区分 dGPU；便携供电连续 6 个样本达到阈值后报告疑似活动和进程。 |
+| 30 秒 telemetry.jsonl 轮转历史 | 已移植 | 每 30 秒写入 JSONL，超过 2 MiB 轮转 `.old`；诊断 ZIP 同时包含当前 telemetry 和历史文件。 |
 | 健康状态、失败退避、runtime.json | 已移植 | Agent 5 秒轮询，失败按 10/20/40/60 秒退避，并写入运行时健康记录。 |
 | 深色五页“雷云”式 UI | 已移植 | Control panel、Game mode、Settings、Diagnostics、About；产品名已改 OpenSynapse。 |
 | 自定义应用/托盘图标 | 已移植 | 使用参考资产复制后的 OpenSynapse 命名 ICO；任务栏使用应用图标，托盘使用独立 ICO。 |
@@ -63,19 +63,19 @@ OpenSynapse 已完成核心电源策略、Smart Auto、临时模式、应用规�
 ## 验证结果
 
 - Core tests：38 passed。
-- Agent tests：51 passed。
+- Agent tests：52 passed。
 - OpenSynapse.Agent Release/Debug build：0 warning、0 error。
 - OpenSynapse.App build：0 warning、0 error。
 - `dotnet format --verify-no-changes --no-restore`：通过。
 - `scripts/Test-InstallerDefinitions.ps1`：通过。
 - 未创建 PR、未推送、未合并 `main`。
 
-最新发布版只读现场检查：HighPowerAc、约 78% 电量、160 W adapter limit、1 个活动显示器、2 个 wake-armed 设备；配置已从 schema 3 升级到 schema 10。SelfTest 为 0 failure、3 warning：当前进程非管理员、没有活动内屏动态刷新路径、未检测到支持的 Razer 设备。
+最新发布版只读现场检查：HighPowerAc、约 78% 电量、约 146 W adapter limit、1 个活动显示器、2 个 wake-armed 设备；配置已从 schema 3 升级到 schema 10。当前现场已读到约 54% GPU、0% dGPU 活动和约 5.1 MB dGPU 专用显存；电池处于 AC 且回退到 `SystemBatteryState`，因此没有伪造放电 EMA。SelfTest 为 0 failure、3 warning：非管理员、没有活动内屏动态刷新路径、未检测到支持的 Razer 设备。管理员权限、目标显示器和真实 Razer 设备验证仍未完成。
 
 ## 尚未能据此宣称的项目
 
 1. 目标 Windows 管理员实机的完整电源/显示/恢复/卸载冒烟；这些操作会真实修改系统设置，本轮只完成代码和自动化验证。
 2. Native dynamic refresh 的目标内屏/外屏回读和失败后恢复。
 3. DeathAdder V3 Pro 真实设备读写。
-4. GPU 负载、独显泄漏、EMA/10 分钟 telemetry 历史。
+4. 当前机器 GPU Performance Counter、dGPU 连续样本、动态刷新和真实 Razer 设备的管理员现场结果。
 5. Quiet 进程/厂商服务维护是否作为 OpenSynapse 的正式目标；当前刻意保持不主动停止。

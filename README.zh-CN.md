@@ -24,7 +24,7 @@ OpenSynapse 已实现 M0–M3 开发切片。完成代码实现不等于通过�
 | 领域 | 当前能力 | 成熟度 |
 | --- | --- | --- |
 | Windows 策略 | Smart Auto、Hyper、Balance、Quiet；电源方案、刷新率、Advanced Color/HDR、内屏亮度和显示缩放 | 已实现，等待目标 Windows 验证 |
-| Smart Auto | 供电、CPU、前台/全屏应用、应用规则、迟滞、临时模式 | 已实现；GPU 负载与独显泄漏诊断待补齐 |
+| Smart Auto | 供电、CPU/GPU、前台/全屏应用、应用规则、迟滞、临时模式、dGPU 连续活动诊断 | 已实现；GPU 不可用时安全回退到 CPU/窗口信号 |
 | 状态恢复 | 原始状态原子保存与电源方案恢复验证 | 已实现，等待目标 Windows 验证 |
 | 桌面控制 | 五页深色 WPF 面板和托盘 UI，通过当前用户专用管道连接提权 Agent | 已实现，等待目标 Windows 验证 |
 | Razer 鼠标 | 设备发现、状态、DPI 和标准接收器轮询率控制 | 实验性 |
@@ -93,7 +93,7 @@ powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1 -TestMouseW
 - 响应必须匹配事务、命令类、命令 ID 和校验和。
 - 高权限 IPC 只允许当前 Windows 用户访问。
 - 捕获的系统状态原子保存到 `%LOCALAPPDATA%\OpenSynapse`。
-- 当前实现只读取本机电池状态和 CPU/前台窗口遥测；不包含云分析、自动更新、账户系统或运行时网络客户端。GPU 利用率和独显泄漏诊断尚未启用。
+- 当前实现只读取本机电池、CPU、前台窗口和 Windows GPU 性能计数器遥测；不包含云分析、自动更新、账户系统或运行时网络客户端。GPU 采样在后台线程运行，电池趋势写入本地 30 秒 JSONL 历史。
 
 安全问题请按 [SECURITY.md](SECURITY.md) 中的私密流程报告，不要创建公开 Issue。
 

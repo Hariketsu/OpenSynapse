@@ -10,7 +10,9 @@ internal static class DiagnosticExporter
         OpenSynapseConfig config,
         OpenSynapseState state,
         PowerSupplyProbe powerSupply,
-        string logPath)
+        string logPath,
+        TelemetrySnapshot? telemetry = null,
+        string? telemetryHistoryPath = null)
     {
         var directory = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -22,12 +24,18 @@ internal static class DiagnosticExporter
         AddText(archive, "config.json", JsonSerializer.Serialize(config, AgentJson.Options));
         AddText(archive, "state.json", JsonSerializer.Serialize(state, AgentJson.Options));
         AddText(archive, "power.json", JsonSerializer.Serialize(powerSupply.GetSnapshot(), AgentJson.Options));
+        if (telemetry is not null)
+            AddText(archive, "telemetry.json", JsonSerializer.Serialize(telemetry, AgentJson.Options));
         AddText(archive, "environment.txt", $"OS={Environment.OSVersion}{Environment.NewLine}"
             + $"Runtime={Environment.Version}{Environment.NewLine}"
             + $"Machine={Environment.MachineName}{Environment.NewLine}"
             + $"Utc={DateTimeOffset.UtcNow:o}{Environment.NewLine}");
         AddText(archive, "powercfg.txt", ReadPowerCfg());
         if (File.Exists(logPath)) archive.CreateEntryFromFile(logPath, "OpenSynapse.log");
+        if (!string.IsNullOrWhiteSpace(telemetryHistoryPath) && File.Exists(telemetryHistoryPath))
+            archive.CreateEntryFromFile(telemetryHistoryPath, "telemetry.jsonl");
+        if (!string.IsNullOrWhiteSpace(telemetryHistoryPath) && File.Exists(telemetryHistoryPath + ".old"))
+            archive.CreateEntryFromFile(telemetryHistoryPath + ".old", "telemetry.jsonl.old");
         var runtimePath = Path.Combine(Path.GetDirectoryName(logPath)!, "runtime.json");
         if (File.Exists(runtimePath)) archive.CreateEntryFromFile(runtimePath, "runtime.json");
         return path;

@@ -16,10 +16,13 @@ internal sealed class AgentController
     private readonly WakeDeviceManager wakeDevices = new();
     private readonly DeathAdderHid deathAdder = new();
     private readonly TelemetryProbe telemetry = new();
+    private readonly TelemetryHistoryWriter telemetryHistory = new();
     private RuntimeHealth health = RuntimeHealth.Starting;
     private DateTimeOffset lastRuntimeWrite = DateTimeOffset.MinValue;
     private int consecutiveFailures;
     private bool shuttingDown;
+
+    public void Dispose() => telemetry.Dispose();
 
     public Task<AgentResponse> HandleAsync(AgentRequest request)
     {
@@ -53,6 +56,7 @@ internal sealed class AgentController
                         $"Balanced changed to Quiet below {config.BalancedBatteryThresholdPercent}% battery.");
                 }
                 var telemetrySnapshot = telemetry.Read(config.ApplicationRules.Any(rule => rule.Scope == ApplicationRuleScope.Running));
+                UpdateDgpuDiagnostics(state, config, powerSnapshot, telemetrySnapshot);
                 var desiredMode = ResolveDesiredMode(state, config, powerSnapshot, telemetrySnapshot);
                 if (!force && state.ActiveMode == desiredMode)
                 {
@@ -61,12 +65,15 @@ internal sealed class AgentController
                     consecutiveFailures = 0;
                     WriteRuntime();
                     store.Save(state);
+                    _ = telemetryHistory.TryWrite(state, config, powerSnapshot, telemetrySnapshot);
                     return true;
                 }
                 ApplyMode(desiredMode, state, config, powerSnapshot);
                 health = RuntimeHealth.Healthy;
                 consecutiveFailures = 0;
                 WriteRuntime();
+                store.Save(state);
+                _ = telemetryHistory.TryWrite(state, config, powerSnapshot, telemetrySnapshot);
                 return true;
             }
             catch (Exception ex)
@@ -230,7 +237,14 @@ internal sealed class AgentController
                 return new AgentResponse(true, "Display policy applied. The display link may blink briefly.", GetStatus(state, config));
 
             case AgentOperation.ExportDiagnostics:
-                var exportPath = DiagnosticExporter.Export(config, state, powerSupply, log.FilePath);
+                var exportTelemetry = telemetry.Read(config.ApplicationRules.Any(rule => rule.Scope == ApplicationRuleScope.Running));
+                var exportPath = DiagnosticExporter.Export(
+                    config,
+                    state,
+                    powerSupply,
+                    log.FilePath,
+                    exportTelemetry,
+                    telemetryHistory.FilePath);
                 _ = log.TryWrite("diagnostics.exported", exportPath);
                 return new AgentResponse(true, $"Diagnostics exported to {exportPath}.", GetStatus(state, config) with { DiagnosticsPath = exportPath });
 
@@ -305,6 +319,12 @@ internal sealed class AgentController
         PowerSnapshot? powerSnapshot = null)
     {
         powerSnapshot ??= powerSupply.GetSnapshot();
+        var telemetrySnapshot = telemetry.Read(config.ApplicationRules.Any(rule => rule.Scope == ApplicationRuleScope.Running));
+        telemetrySnapshot = telemetrySnapshot with
+        {
+            DgpuActivitySuspected = state.SmartAutomation.DgpuActivitySuspected,
+            DgpuActivityConfidence = state.SmartAutomation.DgpuActivityConfidence
+        };
         return new AgentStatus(
             power.GetActiveGuid(),
             state.ActiveMode,
@@ -318,7 +338,7 @@ internal sealed class AgentController
             config.ToQuietMaintenanceSettings(),
             GetWakeDevicesForStatus(),
             GetSmartStatus(state),
-            telemetry.Read(config.ApplicationRules.Any(rule => rule.Scope == ApplicationRuleScope.Running)),
+            telemetrySnapshot,
             state.TemporaryMode,
             health,
             null,
@@ -425,7 +445,11 @@ internal sealed class AgentController
         state.SmartAutomation.CandidateMode,
         state.SmartAutomation.CandidateSamples,
         state.SmartAutomation.LastReason,
-        state.SmartAutomation.MatchedRule);
+        state.SmartAutomation.MatchedRule,
+        state.SmartAutomation.DgpuActivitySuspected,
+        state.SmartAutomation.DgpuActivityConfidence,
+        state.SmartAutomation.DgpuLeakSamples,
+        state.SmartAutomation.DgpuConsumers);
 
     private void WriteRuntime(bool force = false)
     {
@@ -458,6 +482,56 @@ internal sealed class AgentController
         if (batteryPercent >= config.QuietCpuLowThreshold)
             return config.QuietCpuMaxMediumBattery;
         return config.QuietCpuMaxLowBattery;
+    }
+
+    private void UpdateDgpuDiagnostics(
+        OpenSynapseState state,
+        OpenSynapseConfig config,
+        PowerSnapshot powerSnapshot,
+        TelemetrySnapshot telemetrySnapshot)
+    {
+        var smart = state.SmartAutomation;
+        var portablePower = powerSnapshot.SupplyType is SupplyType.Battery or SupplyType.LowPowerPd;
+        var signal = portablePower
+            && telemetrySnapshot.GpuAvailable
+            && (telemetrySnapshot.DgpuPercent >= config.DgpuLeakUtilizationPercent
+                || telemetrySnapshot.DgpuDedicatedMb >= config.DgpuLeakMemoryMb);
+        var wasSuspected = smart.DgpuActivitySuspected;
+        smart.DgpuLeakSamples = signal
+            ? Math.Min(config.DgpuLeakMinimumSamples, smart.DgpuLeakSamples + 1)
+            : 0;
+        smart.DgpuActivitySuspected = smart.DgpuLeakSamples >= config.DgpuLeakMinimumSamples;
+        smart.DgpuConsumers = (telemetrySnapshot.DgpuConsumers ?? [])
+            .Where(consumer => consumer.Discrete
+                && (consumer.UtilizationPercent >= 0.5 || consumer.DedicatedBytes >= 64L * 1024L * 1024L))
+            .Take(8)
+            .ToList();
+        smart.DgpuActivityConfidence = !smart.DgpuActivitySuspected
+            ? "None"
+            : telemetrySnapshot.DgpuPercent >= 5
+                && (telemetrySnapshot.BatteryDischargeAverage10mWatts
+                    ?? telemetrySnapshot.BatteryDischargeEmaWatts
+                    ?? 0) >= config.DgpuActivityDischargeThresholdW
+                    ? "High"
+                    : telemetrySnapshot.DgpuPercent >= config.DgpuLeakUtilizationPercent
+                        || (telemetrySnapshot.BatteryDischargeAverage10mWatts
+                            ?? telemetrySnapshot.BatteryDischargeEmaWatts
+                            ?? 0) >= config.DgpuActivityDischargeThresholdW
+                            ? "Medium"
+                            : "Low";
+
+        if (!wasSuspected && smart.DgpuActivitySuspected)
+        {
+            _ = log.TryWrite(
+                "gpu.activity.suspected",
+                $"Sustained dGPU activity suspected after {smart.DgpuLeakSamples} sample(s); "
+                + $"confidence={smart.DgpuActivityConfidence}; "
+                + $"consumers={string.Join(',', smart.DgpuConsumers.Select(consumer => consumer.ProcessName))}.");
+        }
+        else if (wasSuspected && !smart.DgpuActivitySuspected)
+        {
+            _ = log.TryWrite("gpu.activity.cleared", "Suspected dGPU activity signal cleared.");
+        }
     }
 
     private AgentResponse RunSelfTest()
@@ -557,6 +631,27 @@ internal sealed class AgentController
         catch (Exception ex)
         {
             checks.Add(new DiagnosticCheck("Native dynamic refresh", DiagnosticStatus.Warning, ex.Message));
+        }
+
+        try
+        {
+            var telemetrySnapshot = telemetry.Read();
+            var gpuStatus = telemetrySnapshot.GpuAvailable
+                ? $"GPU {telemetrySnapshot.GpuPercent:0.#}%; dGPU {telemetrySnapshot.DgpuPercent:0.#}% / {telemetrySnapshot.DgpuDedicatedMb:0.#} MB."
+                : $"Windows GPU Performance Counter is unavailable; Smart Auto will use CPU/window signals. {telemetrySnapshot.GpuError}";
+            var batteryStatus = telemetrySnapshot.Confidence == "Unavailable"
+                ? "Battery Class API and SystemBatteryState returned no sample."
+                : $"{telemetrySnapshot.Confidence}; discharge EMA {telemetrySnapshot.BatteryDischargeEmaWatts?.ToString("0.#") ?? "unavailable"} W.";
+            checks.Add(new DiagnosticCheck(
+                "Runtime telemetry",
+                telemetrySnapshot.GpuAvailable || telemetrySnapshot.Confidence != "Unavailable"
+                    ? DiagnosticStatus.Passed
+                    : DiagnosticStatus.Warning,
+                $"{gpuStatus} {batteryStatus}"));
+        }
+        catch (Exception ex)
+        {
+            checks.Add(new DiagnosticCheck("Runtime telemetry", DiagnosticStatus.Warning, ex.Message));
         }
 
         try

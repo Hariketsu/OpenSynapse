@@ -17,7 +17,7 @@ flowchart LR
     Windows["Windows APIs and powercfg"]
     Supply["Windows power status and read-only nvidia-smi"]
     Automation["Smart Auto engine\nCPU, foreground, rules and hysteresis"]
-    Telemetry["Read-only telemetry\nCPU, battery and window state"]
+    Telemetry["Read-only telemetry\nCPU, battery, window and cached GPU state"]
     HID["Supported Razer HID control interface"]
 
     UI --> Core
@@ -45,7 +45,7 @@ Runs elevated for the current user. It owns mode selection, power-source reactio
 
 Display changes are debounced before the active policy is reapplied. Newly active displays are appended to the rollback snapshot before scaling or Advanced Color changes; existing snapshots are never replaced by hot-plug state. Normal Smart Auto mode transitions are seamless by default: refresh, HDR, scaling and brightness are only applied by an explicit display action or a real display-topology event.
 
-The Smart Auto engine is deterministic and platform-independent. It combines trusted supply classification, battery safety limits, foreground/fullscreen process rules, optional Running rules, CPU samples, hysteresis and minimum dwell. The Windows telemetry adapter supplies CPU, foreground-window, lock-state and Battery Class data; GPU utilization remains an optional unavailable signal until a safe Windows Performance Counter provider is enabled.
+The Smart Auto engine is deterministic and platform-independent. It combines trusted supply classification, battery safety limits, foreground/fullscreen process rules, optional Running rules, CPU samples, hysteresis and minimum dwell. The Windows telemetry adapter supplies CPU, foreground-window, lock-state, Battery Class data, and cached GPU Performance Counter/DXGI data. GPU sampling runs in a background worker; the strategy loop never invokes a vendor GPU command.
 
 Temporary modes live in the rollback state rather than changing the persistent selection. They expire at a bounded duration or on a supply-class change and are always rechecked against the Balance battery threshold.
 

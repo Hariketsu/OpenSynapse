@@ -42,6 +42,7 @@ internal sealed class AgentServer(AgentController controller)
             SystemEvents.DisplaySettingsChanged -= DisplaySettingsChanged;
             await CancelDisplayReapplyAsync();
             SystemEvents.PowerModeChanged -= PowerModeChanged;
+            controller.Dispose();
         }
     }
 

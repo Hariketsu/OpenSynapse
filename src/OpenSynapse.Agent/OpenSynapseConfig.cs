@@ -73,6 +73,12 @@ internal sealed class OpenSynapseConfig
         ValidateRange(QuietCpuMaxLowBattery, 1, 100, nameof(QuietCpuMaxLowBattery));
         ValidateRange(QuietCpuMediumThreshold, 1, 99, nameof(QuietCpuMediumThreshold));
         ValidateRange(QuietCpuLowThreshold, 0, QuietCpuMediumThreshold - 1, nameof(QuietCpuLowThreshold));
+        ValidateRange(DgpuLeakMemoryMb, 1, 16384, nameof(DgpuLeakMemoryMb));
+        if (!double.IsFinite(DgpuLeakUtilizationPercent) || DgpuLeakUtilizationPercent is < 0 or > 100)
+            throw new InvalidDataException($"{nameof(DgpuLeakUtilizationPercent)} must be between 0 and 100.");
+        ValidateRange(DgpuLeakMinimumSamples, 1, 120, nameof(DgpuLeakMinimumSamples));
+        if (!double.IsFinite(DgpuActivityDischargeThresholdW) || DgpuActivityDischargeThresholdW is < 0 or > 1000)
+            throw new InvalidDataException($"{nameof(DgpuActivityDischargeThresholdW)} must be between 0 and 1000.");
         if (ProcessMaintenanceSeconds is < 30 or > 3600)
             throw new InvalidDataException("Process maintenance interval must be between 30 and 3600 seconds.");
     }

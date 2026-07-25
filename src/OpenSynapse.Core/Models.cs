@@ -238,7 +238,11 @@ public sealed record SmartAutomationStatus(
     OperatingMode? CandidateMode,
     int CandidateSamples,
     string Reason,
-    string? MatchedRule);
+    string? MatchedRule,
+    bool DgpuActivitySuspected = false,
+    string DgpuActivityConfidence = "None",
+    int DgpuLeakSamples = 0,
+    IReadOnlyList<GpuConsumerSnapshot>? DgpuConsumers = null);
 
 public sealed record TelemetrySnapshot(
     double CpuPercent,
@@ -252,7 +256,24 @@ public sealed record TelemetrySnapshot(
     double? BatteryVoltageMv = null,
     double? EstimatedHours = null,
     string Confidence = "Unavailable",
-    IReadOnlyList<string>? RunningProcesses = null);
+    IReadOnlyList<string>? RunningProcesses = null,
+    bool GpuAvailable = false,
+    double DgpuPercent = -1,
+    double DgpuDedicatedMb = -1,
+    bool DgpuActivitySuspected = false,
+    string DgpuActivityConfidence = "None",
+    IReadOnlyList<GpuConsumerSnapshot>? DgpuConsumers = null,
+    string GpuError = "",
+    double? BatteryDischargeEmaWatts = null,
+    double? BatteryDischargeAverage10mWatts = null);
+
+public sealed record GpuConsumerSnapshot(
+    int ProcessId,
+    string ProcessName,
+    string AdapterName,
+    double UtilizationPercent,
+    long DedicatedBytes,
+    bool Discrete);
 
 public sealed record AgentResponse(
     bool Success,

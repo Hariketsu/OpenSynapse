@@ -56,6 +56,7 @@ internal sealed class StateStore
             state.DisplayScales ??= [];
             state.DisabledWakeDevices ??= [];
             state.SmartAutomation ??= new SmartAutomationState();
+            state.SmartAutomation.DgpuConsumers ??= [];
             if (requiresMigration) Save(state);
             return state;
         }
