@@ -52,9 +52,15 @@ internal sealed class AgentServer(AgentController controller)
 
     private async Task MonitorSelectionAsync(CancellationToken cancellationToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(30));
-        while (await timer.WaitForNextTickAsync(cancellationToken))
-            controller.ApplyCurrentSelection();
+        var interval = TimeSpan.FromSeconds(5);
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(interval, cancellationToken);
+            var succeeded = controller.ApplyCurrentSelection();
+            interval = succeeded
+                ? TimeSpan.FromSeconds(5)
+                : TimeSpan.FromSeconds(Math.Min(interval.TotalSeconds * 2, 60));
+        }
     }
 
     private void DisplaySettingsChanged(object? sender, EventArgs args)

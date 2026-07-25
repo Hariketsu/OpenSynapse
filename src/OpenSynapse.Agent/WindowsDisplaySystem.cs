@@ -15,6 +15,7 @@ internal interface IDisplaySystem
     void SetDisplayScale(string key, int desiredPercent);
     void ApplyMaximumRefresh();
     void ApplyFixedRefresh(int targetHz);
+    void ApplyDynamicNativeRefresh();
     void RestoreRefresh();
 }
 
@@ -54,6 +55,8 @@ internal sealed class WindowsDisplaySystem : IDisplaySystem
     public void ApplyMaximumRefresh() => _ = DisplayModeManager.ApplyMaximumRefresh();
 
     public void ApplyFixedRefresh(int targetHz) => _ = DisplayModeManager.ApplyFixedRefresh(targetHz);
+
+    public void ApplyDynamicNativeRefresh() => _ = DynamicRefreshManager.EnableNativeDynamic();
 
     public void RestoreRefresh() => DisplayModeManager.RestoreRegistryModes();
 

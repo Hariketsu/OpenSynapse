@@ -452,7 +452,7 @@ namespace PowerPilotNative
             return result.ToArray();
         }
 
-        private static int ApplyFrequency(DISPLAY_DEVICE device, bool maximum, int quietTarget)
+        private static int ApplyFrequency(DISPLAY_DEVICE device, bool maximum, int quietTarget, bool requireExact = false)
         {
             DEVMODE current = NewMode();
             if (!EnumDisplaySettingsEx(device.DeviceName, ENUM_CURRENT_SETTINGS, ref current, 0))
@@ -481,6 +481,21 @@ namespace PowerPilotNative
                 foreach (DEVMODE candidate in candidates)
                     if (candidate.dmDisplayFrequency > selected.dmDisplayFrequency)
                         selected = candidate;
+            }
+            else if (requireExact)
+            {
+                bool foundExact = false;
+                foreach (DEVMODE candidate in candidates)
+                {
+                    if (Math.Abs(candidate.dmDisplayFrequency - quietTarget) <= 1)
+                    {
+                        selected = candidate;
+                        foundExact = true;
+                        break;
+                    }
+                }
+                if (!foundExact)
+                    throw new InvalidOperationException(device.DeviceName + " does not expose " + quietTarget + " Hz at the current resolution and color depth.");
             }
             else
             {
@@ -520,9 +535,34 @@ namespace PowerPilotNative
 
         public static int ApplyFixedRefresh(int targetHz)
         {
+            List<DISPLAY_DEVICE> devices = GetActiveDevices();
+            foreach (DISPLAY_DEVICE device in devices)
+            {
+                DEVMODE current = NewMode();
+                if (!EnumDisplaySettingsEx(device.DeviceName, ENUM_CURRENT_SETTINGS, ref current, 0))
+                    continue;
+                bool supported = false;
+                for (int index = 0; ; index++)
+                {
+                    DEVMODE candidate = NewMode();
+                    if (!EnumDisplaySettingsEx(device.DeviceName, index, ref candidate, 0))
+                        break;
+                    if (candidate.dmPelsWidth == current.dmPelsWidth &&
+                        candidate.dmPelsHeight == current.dmPelsHeight &&
+                        candidate.dmBitsPerPel == current.dmBitsPerPel &&
+                        Math.Abs(candidate.dmDisplayFrequency - targetHz) <= 1)
+                    {
+                        supported = true;
+                        break;
+                    }
+                }
+                if (!supported)
+                    throw new InvalidOperationException(device.DeviceName + " does not expose " + targetHz + " Hz at the current resolution and color depth.");
+            }
+
             int changed = 0;
-            foreach (DISPLAY_DEVICE device in GetActiveDevices())
-                changed += ApplyFrequency(device, false, targetHz);
+            foreach (DISPLAY_DEVICE device in devices)
+                changed += ApplyFrequency(device, false, targetHz, true);
             return changed;
         }
 

@@ -38,6 +38,7 @@ function Get-OpenSynapseInstallLayout {
 
     return [pscustomobject]@{
         TaskName = 'OpenSynapse Agent'
+        AppRunValueName = 'OpenSynapse'
         InstallDirectory = $installDirectory
         AgentDirectory = Join-Path $installDirectory 'Agent'
         AppDirectory = Join-Path $installDirectory 'App'
@@ -46,6 +47,21 @@ function Get-OpenSynapseInstallLayout {
         ShortcutPath = $shortcutPath
         DataDirectory = $dataDirectory
     }
+}
+
+function Set-OpenSynapseAppAutostart {
+    param([Parameter(Mandatory)][object]$Layout)
+
+    $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+    New-Item -Path $runKey -Force | Out-Null
+    $quotedPath = '"' + [IO.Path]::GetFullPath($Layout.AppExecutable) + '"'
+    Set-ItemProperty -Path $runKey -Name $Layout.AppRunValueName -Value $quotedPath -Type String
+}
+
+function Remove-OpenSynapseAppAutostart {
+    param([Parameter(Mandatory)][object]$Layout)
+
+    Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name $Layout.AppRunValueName -ErrorAction SilentlyContinue
 }
 
 function Get-OpenSynapseAgentTaskSpec {
@@ -150,6 +166,8 @@ function Stop-OpenSynapseInstalledProcesses {
 Export-ModuleMember -Function @(
     'Test-OpenSynapseAdministrator',
     'Get-OpenSynapseInstallLayout',
+    'Set-OpenSynapseAppAutostart',
+    'Remove-OpenSynapseAppAutostart',
     'Get-OpenSynapseAgentTaskSpec',
     'Assert-OpenSynapseTaskSpec',
     'New-OpenSynapseAgentTaskDefinition',

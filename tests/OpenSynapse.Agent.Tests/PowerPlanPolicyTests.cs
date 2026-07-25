@@ -6,8 +6,8 @@ namespace OpenSynapse.Agent.Tests;
 public sealed class PowerPlanPolicyTests
 {
     [DataRow("893dee8e-2bef-41e0-89c6-b55d0929964c", 5, 5, 5, 5, 5, 5, false)]
-    [DataRow("bc5038f7-23e0-4960-96da-33abaf5935ec", 100, 100, 100, 100, 80, 80, false)]
-    [DataRow("36687f9e-e3a5-4dbf-b1dc-15eb381c6863", 0, 20, 50, 70, 90, 90, true)]
+    [DataRow("bc5038f7-23e0-4960-96da-33abaf5935ec", 100, 100, 100, 100, 80, 75, false)]
+    [DataRow("36687f9e-e3a5-4dbf-b1dc-15eb381c6863", 0, 20, 50, 70, 90, 95, true)]
     [DataRow("be337238-0d82-4146-a960-4f3749d470c7", 2, 2, 3, 3, 0, 0, true)]
     [DataRow("94d3a615-a899-4ac5-ae2b-e4d8f634367f", 1, 1, 1, 0, 0, 0, true)]
     [DataRow("12bbebe6-58d6-4636-95bb-3217ef867c1a", 0, 1, 1, 2, 3, 3, true)]
@@ -53,6 +53,40 @@ public sealed class PowerPlanPolicyTests
         Assert.AreEqual(new PowerPlanValues(balancedAc, balancedDc), setting.GetValues(OperatingMode.Balanced));
         Assert.AreEqual(new PowerPlanValues(quietAc, quietDc), setting.GetValues(OperatingMode.Quiet));
         Assert.AreEqual(optional, setting.Optional);
-        Assert.HasCount(13, PowerPlanManager.PolicySettings);
+        Assert.HasCount(25, PowerPlanManager.PolicySettings);
+    }
+
+    [TestMethod]
+    public void LatestReferenceSettingsAreScopedToTheCorrectProfile()
+    {
+        var processor = "54533251-82be-4824-96c1-47b60b740d00";
+        var hyperOnly = new Dictionary<string, (PowerPlanValues Values, int Expected)>
+        {
+            ["893dee8e-2bef-41e0-89c6-b55d0929964d"] = (new(5, 5), 5),
+            ["893dee8e-2bef-41e0-89c6-b55d0929964e"] = (new(5, 5), 5),
+            ["bc5038f7-23e0-4960-96da-33abaf5935ed"] = (new(100, 100), 100),
+            ["bc5038f7-23e0-4960-96da-33abaf5935ee"] = (new(100, 100), 100),
+            ["45bcc044-d885-43e2-8605-ee0ec6e96b59"] = (new(100, 100), 100),
+            ["8baa4a8a-14c6-4451-8e8b-14bdbd197537"] = (new(1, 1), 1),
+            ["465e1f50-b610-473a-ab58-00d1077dc418"] = (new(2, 2), 2),
+            ["465e1f50-b610-473a-ab58-00d1077dc419"] = (new(3, 3), 3),
+            ["0cc5b647-c1df-4637-891a-dec35c318583"] = (new(100, 100), 100),
+            ["0cc5b647-c1df-4637-891a-dec35c318584"] = (new(0, 0), 0)
+        };
+
+        foreach (var item in hyperOnly)
+        {
+            var setting = PowerPlanManager.PolicySettings.Single(value => value.Setting == item.Key);
+            Assert.AreEqual(processor, setting.Subgroup);
+            Assert.AreEqual(item.Value.Values, setting.GetValues(OperatingMode.Performance));
+            Assert.AreEqual(OperatingMode.Performance, setting.OnlyMode);
+        }
+
+        var wakeTimers = PowerPlanManager.PolicySettings.Single(value => value.Setting == "bd3b718a-0680-4d9d-8ab2-e1d2b4ac806d");
+        var standbyNetwork = PowerPlanManager.PolicySettings.Single(value => value.Setting == "f15576e8-98b7-4186-b944-eafa664402d9");
+        Assert.AreEqual(OperatingMode.Quiet, wakeTimers.OnlyMode);
+        Assert.AreEqual(OperatingMode.Quiet, standbyNetwork.OnlyMode);
+        Assert.AreEqual(new PowerPlanValues(0, 0), wakeTimers.GetValues(OperatingMode.Quiet));
+        Assert.AreEqual(new PowerPlanValues(0, 0), standbyNetwork.GetValues(OperatingMode.Quiet));
     }
 }

@@ -6,7 +6,7 @@ namespace OpenSynapse.Agent;
 
 internal sealed class OpenSynapseState
 {
-    public const int CurrentSchemaVersion = 4;
+    public const int CurrentSchemaVersion = 10;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     [JsonPropertyName("selection")]
@@ -21,6 +21,8 @@ internal sealed class OpenSynapseState
     public List<AdvancedColorState> AdvancedColors { get; set; } = [];
     public List<DisplayScaleState> DisplayScales { get; set; } = [];
     public List<string> DisabledWakeDevices { get; set; } = [];
+    public SmartAutomationState SmartAutomation { get; set; } = new();
+    public TemporaryModeState? TemporaryMode { get; set; }
 }
 
 internal sealed record AdvancedColorState(string Key, bool Enabled);
@@ -53,6 +55,7 @@ internal sealed class StateStore
             state.AdvancedColors ??= [];
             state.DisplayScales ??= [];
             state.DisabledWakeDevices ??= [];
+            state.SmartAutomation ??= new SmartAutomationState();
             if (requiresMigration) Save(state);
             return state;
         }

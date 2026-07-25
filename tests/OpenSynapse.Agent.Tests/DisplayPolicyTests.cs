@@ -144,6 +144,24 @@ public sealed class DisplayPolicyTests
     }
 
     [TestMethod]
+    public void QuietBatteryBrightnessUsesTheReferenceUpperBounds()
+    {
+        var displaySystem = new FakeDisplaySystem { Brightness = 80 };
+        var policy = new DisplayPolicy(displaySystem);
+        var config = new OpenSynapseConfig { QuietBrightnessPercent = 60 };
+        var state = new OpenSynapseState();
+
+        policy.Capture(OperatingMode.Quiet, state, config);
+        policy.Apply(
+            OperatingMode.Quiet,
+            state,
+            config,
+            powerSnapshot: new PowerSnapshot(PowerSource.Battery, SupplyType.Battery, 49));
+
+        Assert.AreEqual(30, displaySystem.Brightness);
+    }
+
+    [TestMethod]
     public void RestoreClearsOnlyStateConfirmedByReadback()
     {
         var displaySystem = new FakeDisplaySystem
@@ -242,6 +260,8 @@ public sealed class DisplayPolicyTests
         public void ApplyMaximumRefresh() => MaximumRefreshApplications++;
 
         public void ApplyFixedRefresh(int targetHz) => FixedRefreshApplications.Add(targetHz);
+
+        public void ApplyDynamicNativeRefresh() => throw new InvalidOperationException("Dynamic refresh not available in fake.");
 
         public void RestoreRefresh()
         {

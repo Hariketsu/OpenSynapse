@@ -44,8 +44,14 @@ internal sealed class DisplayPolicy
         }
     }
 
-    public void Apply(OperatingMode mode, OpenSynapseState state, OpenSynapseConfig config)
+    public void Apply(
+        OperatingMode mode,
+        OpenSynapseState state,
+        OpenSynapseConfig config,
+        bool applyDisplaySettings = true,
+        PowerSnapshot? powerSnapshot = null)
     {
+        if (!applyDisplaySettings) return;
         if (mode != OperatingMode.Performance)
         {
             CaptureForLowPower(state, config);
@@ -62,10 +68,7 @@ internal sealed class DisplayPolicy
             {
                 try
                 {
-                    displaySystem.SetBrightness(
-                        mode == OperatingMode.Balanced
-                            ? config.BalancedBrightnessPercent
-                            : config.QuietBrightnessPercent);
+                    displaySystem.SetBrightness(ResolveBrightness(mode, config, powerSnapshot));
                 }
                 catch { }
             }
@@ -169,37 +172,36 @@ internal sealed class DisplayPolicy
 
     private void ApplyRefreshPolicy(OperatingMode mode, OpenSynapseConfig config)
     {
-        try
+        switch (config.RefreshPolicy)
         {
-            switch (config.RefreshPolicy)
-            {
-                case RefreshPolicy.Unmanaged:
-                    displaySystem.RestoreRefresh();
-                    break;
-                case RefreshPolicy.Maximum:
-                    displaySystem.ApplyMaximumRefresh();
-                    break;
-                case RefreshPolicy.Fixed60:
-                    displaySystem.ApplyFixedRefresh(60);
-                    break;
-                case RefreshPolicy.Fixed120:
-                    displaySystem.ApplyFixedRefresh(120);
-                    break;
-                case RefreshPolicy.Fixed240:
-                    displaySystem.ApplyFixedRefresh(240);
-                    break;
-                case RefreshPolicy.FollowMode when mode == OperatingMode.Performance:
-                    displaySystem.ApplyMaximumRefresh();
-                    break;
-                case RefreshPolicy.FollowMode:
-                    displaySystem.ApplyFixedRefresh(
-                        mode == OperatingMode.Balanced
-                            ? config.BalancedRefreshRateHz
-                            : config.QuietRefreshRateHz);
-                    break;
-            }
+            case RefreshPolicy.Unmanaged:
+                displaySystem.RestoreRefresh();
+                break;
+            case RefreshPolicy.Maximum:
+                displaySystem.ApplyMaximumRefresh();
+                break;
+            case RefreshPolicy.Fixed60:
+                displaySystem.ApplyFixedRefresh(60);
+                break;
+            case RefreshPolicy.Fixed120:
+                displaySystem.ApplyFixedRefresh(120);
+                break;
+            case RefreshPolicy.Fixed240:
+                displaySystem.ApplyFixedRefresh(240);
+                break;
+            case RefreshPolicy.DynamicNative:
+                displaySystem.ApplyDynamicNativeRefresh();
+                break;
+            case RefreshPolicy.FollowMode when mode == OperatingMode.Performance:
+                displaySystem.ApplyMaximumRefresh();
+                break;
+            case RefreshPolicy.FollowMode:
+                displaySystem.ApplyFixedRefresh(
+                    mode == OperatingMode.Balanced
+                        ? config.BalancedRefreshRateHz
+                        : config.QuietRefreshRateHz);
+                break;
         }
-        catch { }
     }
 
     private void RestoreDisplayScales(OpenSynapseState state, bool clearCompleted)
@@ -225,5 +227,19 @@ internal sealed class DisplayPolicy
                 && display.CurrentScalePercent == captured.ScalePercent);
         }
         catch { }
+    }
+
+    private static int ResolveBrightness(
+        OperatingMode mode,
+        OpenSynapseConfig config,
+        PowerSnapshot? powerSnapshot)
+    {
+        if (mode == OperatingMode.Balanced) return config.BalancedBrightnessPercent;
+        var target = config.QuietBrightnessPercent;
+        if (!config.AdaptiveQuietBrightness || powerSnapshot?.Source != PowerSource.Battery)
+            return target;
+        var battery = powerSnapshot.BatteryPercent;
+        var upperBound = battery is < 20 ? 20 : battery is < 50 ? 30 : 35;
+        return Math.Min(target, upperBound);
     }
 }

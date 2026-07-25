@@ -13,10 +13,10 @@ if ($layout.ShortcutPath -ne 'C:\Users\Test\AppData\Roaming\Microsoft\Windows\St
 }
 $installSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Install-OpenSynapse.ps1') -Raw
 $uninstallSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Uninstall-OpenSynapse.ps1') -Raw
-foreach ($required in @('uninstall-cleanup', 'Remove-Item', 'Register-ScheduledTask', 'Assert-OpenSynapseTaskDefinition', 'OpenSynapse.App.exe')) {
+foreach ($required in @('uninstall-cleanup', 'Remove-Item', 'Register-ScheduledTask', 'Assert-OpenSynapseTaskDefinition', 'OpenSynapse.App.exe', 'Set-OpenSynapseAppAutostart')) {
     if ($installSource.IndexOf($required, [StringComparison]::Ordinal) -lt 0) { throw "Installer is missing $required." }
 }
-foreach ($required in @('uninstall-cleanup', 'Unregister-ScheduledTask', 'KeepUserData')) {
+foreach ($required in @('uninstall-cleanup', 'Unregister-ScheduledTask', 'KeepUserData', 'Remove-OpenSynapseAppAutostart')) {
     if ($uninstallSource.IndexOf($required, [StringComparison]::Ordinal) -lt 0) { throw "Uninstaller is missing $required." }
 }
 

@@ -6,6 +6,7 @@ Import-Module (Join-Path $PSScriptRoot 'OpenSynapse.Install.psm1') -Force
 if (-not (Test-OpenSynapseAdministrator)) { throw 'Run the uninstaller from an elevated PowerShell terminal.' }
 
 $layout = Get-OpenSynapseInstallLayout
+Remove-OpenSynapseAppAutostart -Layout $layout
 $task = Get-ScheduledTask -TaskName $layout.TaskName -ErrorAction SilentlyContinue
 if ($null -ne $task) { Stop-ScheduledTask -TaskName $layout.TaskName -ErrorAction SilentlyContinue }
 Stop-OpenSynapseInstalledProcesses -InstallDirectory $layout.InstallDirectory

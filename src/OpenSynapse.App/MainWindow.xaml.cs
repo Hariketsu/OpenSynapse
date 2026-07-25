@@ -13,6 +13,8 @@ public partial class MainWindow : Window
 {
     private readonly AgentClient agent = new();
     private readonly Forms.NotifyIcon tray;
+    private readonly System.Drawing.Icon trayIcon;
+    private readonly List<ApplicationRule> applicationRules = [];
     private ModeSelection selection = ModeSelection.Auto;
     private bool exiting;
 
@@ -22,10 +24,19 @@ public partial class MainWindow : Window
         InternalScaleBox.ItemsSource = DisplayPolicySettings.AllowedDisplayScales;
         ExternalScaleBox.ItemsSource = DisplayPolicySettings.AllowedDisplayScales;
         RefreshPolicyBox.ItemsSource = Enum.GetValues<RefreshPolicy>();
+        RuleProfileBox.ItemsSource = Enum.GetValues<ApplicationRuleProfile>();
+        RuleScopeBox.ItemsSource = Enum.GetValues<ApplicationRuleScope>();
+        RuleProfileBox.SelectedItem = ApplicationRuleProfile.Performance;
+        RuleScopeBox.SelectedItem = ApplicationRuleScope.Foreground;
+        var trayIconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "OpenSynapse.Tray.ico");
+        trayIcon = File.Exists(trayIconPath)
+            ? new System.Drawing.Icon(trayIconPath)
+            : System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath!)
+                ?? System.Drawing.SystemIcons.Application;
         tray = new Forms.NotifyIcon
         {
             Text = "OpenSynapse",
-            Icon = System.Drawing.SystemIcons.Application,
+            Icon = trayIcon,
             Visible = true,
             ContextMenuStrip = new Forms.ContextMenuStrip()
         };
@@ -55,9 +66,78 @@ public partial class MainWindow : Window
     private async void Performance_Click(object sender, RoutedEventArgs e) => await SelectAsync(ModeSelection.Performance);
     private async void Balanced_Click(object sender, RoutedEventArgs e) => await SelectAsync(ModeSelection.Balanced);
     private async void Quiet_Click(object sender, RoutedEventArgs e) => await SelectAsync(ModeSelection.Quiet);
+    private void DashboardNav_Click(object sender, RoutedEventArgs e) => MainTabs.SelectedIndex = 0;
+    private void GameNav_Click(object sender, RoutedEventArgs e) => MainTabs.SelectedIndex = 1;
+    private void SettingsNav_Click(object sender, RoutedEventArgs e) => MainTabs.SelectedIndex = 2;
+    private void DiagnosticsNav_Click(object sender, RoutedEventArgs e) => MainTabs.SelectedIndex = 3;
+    private void AboutNav_Click(object sender, RoutedEventArgs e) => MainTabs.SelectedIndex = 4;
+    private void TitleBar_MouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (e.ClickCount == 2)
+        {
+            Maximize_Click(sender, e);
+            return;
+        }
+        if (e.LeftButton == System.Windows.Input.MouseButtonState.Pressed) DragMove();
+    }
+
+    private void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+
+    private void Maximize_Click(object sender, RoutedEventArgs e) => WindowState =
+        WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+
+    private void CloseWindow_Click(object sender, RoutedEventArgs e) => Hide();
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await RefreshAsync();
     private async void SelfTest_Click(object sender, RoutedEventArgs e) =>
         await SendAsync(new AgentRequest(AgentOperation.SelfTest));
+
+    private async void ApplyDisplayNow_Click(object sender, RoutedEventArgs e) =>
+        await SendAsync(new AgentRequest(AgentOperation.ApplyDisplayPolicyNow));
+
+    private async void ExportDiagnostics_Click(object sender, RoutedEventArgs e) =>
+        await SendAsync(new AgentRequest(AgentOperation.ExportDiagnostics));
+
+    private async void TemporaryHyper_Click(object sender, RoutedEventArgs e) => await SetTemporaryAsync(OperatingMode.Performance, 30, false);
+    private async void TemporaryBalance_Click(object sender, RoutedEventArgs e) => await SetTemporaryAsync(OperatingMode.Balanced, 30, false);
+    private async void TemporaryQuiet_Click(object sender, RoutedEventArgs e) => await SetTemporaryAsync(OperatingMode.Quiet, 30, false);
+    private async void TemporaryUntilPower_Click(object sender, RoutedEventArgs e) => await SetTemporaryAsync(OperatingMode.Balanced, null, true);
+    private async void ClearTemporary_Click(object sender, RoutedEventArgs e) =>
+        await SendAsync(new AgentRequest(AgentOperation.ClearTemporaryMode));
+
+    private async Task SetTemporaryAsync(OperatingMode mode, int? minutes, bool untilPowerChange)
+    {
+        await SendAsync(new AgentRequest(
+            AgentOperation.SetTemporaryMode,
+            Mode: mode,
+            TemporaryMinutes: minutes,
+            TemporaryUntilPowerChange: untilPowerChange));
+    }
+
+    private async void AddRule_Click(object sender, RoutedEventArgs e)
+    {
+        var process = RuleProcessBox.Text.Trim();
+        if (process.Length == 0) { Log("Application rule process name is required."); return; }
+        if (RuleProfileBox.SelectedItem is not ApplicationRuleProfile profile
+            || RuleScopeBox.SelectedItem is not ApplicationRuleScope scope)
+        {
+            Log("Select an application rule profile and scope.");
+            return;
+        }
+        var rule = new ApplicationRule(process, profile, scope, RuleEnabledCheck.IsChecked == true);
+        try { rule.Validate(); }
+        catch (InvalidDataException ex) { Log(ex.Message); return; }
+        applicationRules.RemoveAll(item => string.Equals(item.ProcessName, process, StringComparison.OrdinalIgnoreCase)
+            && item.Scope == scope);
+        applicationRules.Add(rule);
+        await SendAsync(new AgentRequest(AgentOperation.SetApplicationRules, ApplicationRules: applicationRules));
+    }
+
+    private async void RemoveRule_Click(object sender, RoutedEventArgs e)
+    {
+        var process = RuleProcessBox.Text.Trim();
+        applicationRules.RemoveAll(item => string.Equals(item.ProcessName, process, StringComparison.OrdinalIgnoreCase));
+        await SendAsync(new AgentRequest(AgentOperation.SetApplicationRules, ApplicationRules: applicationRules));
+    }
 
     private async void SaveDisplayPolicy_Click(object sender, RoutedEventArgs e)
     {
@@ -138,7 +218,34 @@ public partial class MainWindow : Window
         var battery = status.BatteryPercent is int percent ? $" / {percent}%" : string.Empty;
         var adapterLimit = status.AdapterLimitWatts is double watts ? $" / {watts:0.#} W GPU limit" : string.Empty;
         PowerText.Text = $"Power: {GetSupplyDisplayName(status.SupplyType)}{battery}{adapterLimit}";
-        ModeText.Text = $"Selection: {status.Selection}   Active: {status.ActiveMode?.ToString() ?? "unmanaged"}";
+        ModeText.Text = $"Selection: {GetSelectionDisplayName(status.Selection)}   Active: {GetModeDisplayName(status.ActiveMode)}";
+        HealthText.Text = status.Health.ToString();
+        HealthText.Foreground = status.Health == RuntimeHealth.Healthy
+            ? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(68, 214, 44))
+            : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.Orange);
+        if (status.SmartAutomation is not null)
+        {
+            SmartReasonText.Text = status.SmartAutomation.Reason;
+            if (status.SmartAutomation.CandidateMode is { } candidate)
+                SmartReasonText.Text += $" · pending {GetModeDisplayName(candidate)} ({status.SmartAutomation.CandidateSamples} samples)";
+        }
+        if (status.Telemetry is not null)
+        {
+            var cpu = status.Telemetry.CpuPercent >= 0 ? $"CPU {status.Telemetry.CpuPercent:0.#}%" : "CPU unavailable";
+            var gpu = status.Telemetry.GpuPercent >= 0 ? $"GPU {status.Telemetry.GpuPercent:0.#}%" : "GPU unavailable";
+            TelemetryText.Text = $"{cpu} · {gpu} · foreground {status.Telemetry.ForegroundProcess ?? "none"}";
+        }
+        TemporaryText.Text = status.TemporaryMode is { } temporary
+            ? temporary.UntilPowerChange
+                ? $"Temporary {GetModeDisplayName(temporary.Mode)} until power changes"
+                : $"Temporary {GetModeDisplayName(temporary.Mode)} until {temporary.ExpiresAt?.ToLocalTime():HH:mm}"
+            : "No temporary override";
+        applicationRules.Clear();
+        applicationRules.AddRange(status.ApplicationRules ?? []);
+        RulesText.Text = applicationRules.Count == 0
+            ? "No custom application rules. Built-in performance/productivity lists remain active."
+            : string.Join(Environment.NewLine, applicationRules.Select(rule =>
+                $"{rule.ProcessName}  →  {rule.Profile}  ·  {rule.Scope}  ·  {(rule.Enabled ? "enabled" : "disabled")}"));
         var mouse = status.RazerDevices.FirstOrDefault();
         MouseText.Text = mouse is null
             ? "No supported mouse detected. Supported PIDs: 00B6, 00B7, 00C2, 00C3."
@@ -207,6 +314,23 @@ public partial class MainWindow : Window
         _ => "unknown"
     };
 
+    private static string GetModeDisplayName(OperatingMode? mode) => mode switch
+    {
+        OperatingMode.Performance => "Hyper",
+        OperatingMode.Balanced => "Balance",
+        OperatingMode.Quiet => "Quiet",
+        _ => "unmanaged"
+    };
+
+    private static string GetSelectionDisplayName(ModeSelection mode) => mode switch
+    {
+        ModeSelection.Auto => "Smart Auto",
+        ModeSelection.Performance => "Hyper",
+        ModeSelection.Balanced => "Balance",
+        ModeSelection.Quiet => "Quiet",
+        _ => mode.ToString()
+    };
+
     private static PowerSource GetPowerSource() => GetSystemPowerStatus(out var status)
         ? status.ACLineStatus switch { 1 => PowerSource.Ac, 0 => PowerSource.Battery, _ => PowerSource.Unknown }
         : PowerSource.Unknown;
@@ -247,6 +371,7 @@ public partial class MainWindow : Window
         SystemEvents.PowerModeChanged -= PowerModeChanged;
         tray.Visible = false;
         tray.Dispose();
+        trayIcon.Dispose();
         System.Windows.Application.Current.Shutdown();
     }
 

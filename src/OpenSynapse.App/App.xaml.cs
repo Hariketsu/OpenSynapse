@@ -1,4 +1,5 @@
 using System.Security.Principal;
+using System.Runtime.InteropServices;
 using OpenSynapse.Core;
 
 namespace OpenSynapse.App;
@@ -12,6 +13,7 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(System.Windows.StartupEventArgs e)
     {
+        _ = SetCurrentProcessExplicitAppUserModelID("OpenSynapse.Desktop");
         base.OnStartup(e);
         var user = WindowsIdentity.GetCurrent().User?.Value ?? Environment.UserName;
         var suffix = user.Replace('\\', '_');
@@ -53,4 +55,7 @@ public partial class App : System.Windows.Application
         while (WaitHandle.WaitAny(handles) == 0 && !cancellationToken.IsCancellationRequested)
             Dispatcher.BeginInvoke(() => (MainWindow as MainWindow)?.ActivateFromExternalRequest());
     }
+
+    [DllImport("shell32.dll")]
+    private static extern int SetCurrentProcessExplicitAppUserModelID([MarshalAs(UnmanagedType.LPWStr)] string appId);
 }

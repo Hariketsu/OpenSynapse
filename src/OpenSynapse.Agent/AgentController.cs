@@ -1,4 +1,5 @@
 using System.Security.Principal;
+using System.Text.Json;
 using OpenSynapse.Core;
 
 namespace OpenSynapse.Agent;
@@ -14,6 +15,10 @@ internal sealed class AgentController
     private readonly DisplayPolicy displays = new();
     private readonly WakeDeviceManager wakeDevices = new();
     private readonly DeathAdderHid deathAdder = new();
+    private readonly TelemetryProbe telemetry = new();
+    private RuntimeHealth health = RuntimeHealth.Starting;
+    private DateTimeOffset lastRuntimeWrite = DateTimeOffset.MinValue;
+    private int consecutiveFailures;
     private bool shuttingDown;
 
     public Task<AgentResponse> HandleAsync(AgentRequest request)
@@ -29,11 +34,11 @@ internal sealed class AgentController
         }
     }
 
-    public void ApplyCurrentSelection(bool force = false)
+    public bool ApplyCurrentSelection(bool force = false)
     {
         lock (gate)
         {
-            if (shuttingDown) return;
+            if (shuttingDown) return false;
             try
             {
                 var (state, config) = LoadContext();
@@ -47,21 +52,31 @@ internal sealed class AgentController
                         "selection.latched",
                         $"Balanced changed to Quiet below {config.BalancedBatteryThresholdPercent}% battery.");
                 }
-                var desiredMode = ModeSelector.Resolve(
-                    config.Selection,
-                    powerSnapshot,
-                    config.BalancedBatteryThresholdPercent);
+                var telemetrySnapshot = telemetry.Read(config.ApplicationRules.Any(rule => rule.Scope == ApplicationRuleScope.Running));
+                var desiredMode = ResolveDesiredMode(state, config, powerSnapshot, telemetrySnapshot);
                 if (!force && state.ActiveMode == desiredMode)
                 {
                     wakeDevices.Apply(desiredMode, config, state, () => store.Save(state));
-                    return;
+                    health = RuntimeHealth.Healthy;
+                    consecutiveFailures = 0;
+                    WriteRuntime();
+                    store.Save(state);
+                    return true;
                 }
                 ApplyMode(desiredMode, state, config, powerSnapshot);
+                health = RuntimeHealth.Healthy;
+                consecutiveFailures = 0;
+                WriteRuntime();
+                return true;
             }
             catch (Exception ex)
             {
+                health = RuntimeHealth.Recovering;
+                consecutiveFailures++;
+                WriteRuntime(force: true);
                 _ = log.TryWrite("selection.automatic.failed", ex.Message);
                 Console.Error.WriteLine($"Automatic mode application failed: {ex.Message}");
+                return false;
             }
         }
     }
@@ -80,7 +95,7 @@ internal sealed class AgentController
                 RequireAdministrator();
                 displays.Capture(mode, state, context.Config);
                 store.Save(state);
-                displays.Apply(mode, state, context.Config);
+                displays.Apply(mode, state, context.Config, powerSnapshot: powerSupply.GetSnapshot());
                 _ = log.TryWrite("display.reapplied", mode.ToString());
             }
             catch (Exception ex)
@@ -171,6 +186,54 @@ internal sealed class AgentController
                     "Quiet wake-device settings saved and reconciled.",
                     GetStatus(state, updatedQuietConfig));
 
+            case AgentOperation.SetApplicationRules:
+                var rules = request.ApplicationRules
+                    ?? throw new ArgumentException("ApplicationRules are required.");
+                var updatedRulesConfig = config.WithApplicationRules(rules);
+                configurationStore.Save(updatedRulesConfig);
+                _ = log.TryWrite("configuration.application-rules.changed", $"{rules.Count} rule(s).");
+                return new AgentResponse(true, "Application rules saved.", GetStatus(state, updatedRulesConfig));
+
+            case AgentOperation.SetTemporaryMode:
+                RequireAdministrator();
+                var temporaryMode = request.Mode ?? throw new ArgumentException("Mode is required.");
+                var temporaryPower = powerSupply.GetSnapshot();
+                EnsureBalancedEligible(temporaryMode, temporaryPower, config);
+                if (!request.TemporaryUntilPowerChange && request.TemporaryMinutes is not (30 or 60 or 120))
+                    throw new ArgumentException("Temporary mode duration must be 30, 60, 120 minutes, or until power changes.");
+                state.TemporaryMode = new TemporaryModeState(
+                    temporaryMode,
+                    request.TemporaryUntilPowerChange
+                        ? null
+                        : DateTimeOffset.UtcNow.AddMinutes(request.TemporaryMinutes!.Value),
+                    request.TemporaryUntilPowerChange,
+                    temporaryPower.SupplyType);
+                store.Save(state);
+                return ApplyMode(temporaryMode, state, config, temporaryPower);
+
+            case AgentOperation.ClearTemporaryMode:
+                RequireAdministrator();
+                state.TemporaryMode = null;
+                store.Save(state);
+                var resumedPower = powerSupply.GetSnapshot();
+                var resumedMode = ResolveDesiredMode(state, config, resumedPower, telemetry.Read());
+                return ApplyMode(resumedMode, state, config, resumedPower);
+
+            case AgentOperation.ApplyDisplayPolicyNow:
+                RequireAdministrator();
+                var explicitMode = state.ActiveMode
+                    ?? ResolveDesiredMode(state, config, powerSupply.GetSnapshot(), telemetry.Read());
+                displays.Capture(explicitMode, state, config);
+                store.Save(state);
+                displays.Apply(explicitMode, state, config, applyDisplaySettings: true);
+                _ = log.TryWrite("display.explicit-apply", explicitMode.ToString());
+                return new AgentResponse(true, "Display policy applied. The display link may blink briefly.", GetStatus(state, config));
+
+            case AgentOperation.ExportDiagnostics:
+                var exportPath = DiagnosticExporter.Export(config, state, powerSupply, log.FilePath);
+                _ = log.TryWrite("diagnostics.exported", exportPath);
+                return new AgentResponse(true, $"Diagnostics exported to {exportPath}.", GetStatus(state, config) with { DiagnosticsPath = exportPath });
+
             case AgentOperation.Restore:
             case AgentOperation.Shutdown:
                 RequireAdministrator();
@@ -253,7 +316,13 @@ internal sealed class AgentController
             deathAdder.ReadDevices(),
             config.ToDisplayPolicySettings(),
             config.ToQuietMaintenanceSettings(),
-            GetWakeDevicesForStatus());
+            GetWakeDevicesForStatus(),
+            GetSmartStatus(state),
+            telemetry.Read(config.ApplicationRules.Any(rule => rule.Scope == ApplicationRuleScope.Running)),
+            state.TemporaryMode,
+            health,
+            null,
+            config.ApplicationRules);
     }
 
     private AgentResponse ApplyMode(
@@ -266,11 +335,16 @@ internal sealed class AgentController
         try
         {
             state.OriginalPowerPlan ??= power.GetActiveGuid();
-            displays.Capture(mode, state, config);
+            var applyDisplay = !config.SeamlessModeSwitching;
+            if (applyDisplay) displays.Capture(mode, state, config);
             store.Save(state);
             power.Apply(mode, state);
+            if (mode == OperatingMode.Performance)
+                power.ApplyHyperCpuPolicy(state, config.HyperCpuPolicy);
+            if (mode == OperatingMode.Quiet && config.AdaptiveQuietCpu && powerSnapshot?.Source == PowerSource.Battery)
+                power.ApplyQuietCpuMax(state, ResolveQuietCpuMax(config, powerSnapshot.BatteryPercent));
             wakeDevices.Apply(mode, config, state, () => store.Save(state));
-            displays.Apply(mode, state, config);
+            if (applyDisplay) displays.Apply(mode, state, config, applyDisplaySettings: true, powerSnapshot: powerSnapshot);
             state.ActiveMode = mode;
             _ = log.TryWrite("mode.applied", mode.ToString());
             return new AgentResponse(true, $"Applied {mode} mode.", GetStatus(state, config, powerSnapshot));
@@ -301,6 +375,89 @@ internal sealed class AgentController
             _ = log.TryWrite("configuration.migrated", "Moved mode selection from state schema to config schema.");
         }
         return (state, config);
+    }
+
+    private OperatingMode ResolveDesiredMode(
+        OpenSynapseState state,
+        OpenSynapseConfig config,
+        PowerSnapshot powerSnapshot,
+        TelemetrySnapshot telemetrySnapshot)
+    {
+        if (state.TemporaryMode is { } temporary)
+        {
+            var expired = temporary.ExpiresAt is not null && temporary.ExpiresAt <= DateTimeOffset.UtcNow;
+            var powerChanged = temporary.UntilPowerChange && temporary.StartedSupplyType != powerSnapshot.SupplyType;
+            if (expired || powerChanged)
+            {
+                state.TemporaryMode = null;
+                _ = log.TryWrite("temporary-mode.expired", expired ? "duration elapsed" : "supply changed");
+            }
+            else
+            {
+                return temporary.Mode == OperatingMode.Balanced
+                    && !ModeSelector.IsBalancedEligible(powerSnapshot, config.BalancedBatteryThresholdPercent)
+                    ? OperatingMode.Quiet
+                    : temporary.Mode;
+            }
+        }
+
+        if (config.Selection != ModeSelection.Auto || !config.SmartAutomationEnabled)
+            return ModeSelector.Resolve(config.Selection, powerSnapshot, config.BalancedBatteryThresholdPercent);
+
+        var decision = SmartAutomationEngine.Evaluate(
+            new SmartAutomationInput(
+                powerSnapshot.SupplyType,
+                powerSnapshot.BatteryPercent,
+                telemetrySnapshot.CpuPercent,
+                telemetrySnapshot.GpuPercent,
+                telemetrySnapshot.ForegroundProcess,
+                config.SmartFullscreenEnabled && telemetrySnapshot.ForegroundFullscreen,
+                telemetrySnapshot.SessionLocked,
+                telemetrySnapshot.RunningProcesses),
+            config.ToSmartAutomationSettings(),
+            state.SmartAutomation,
+            DateTimeOffset.UtcNow);
+        return decision.Mode;
+    }
+
+    private SmartAutomationStatus GetSmartStatus(OpenSynapseState state) => new(
+        state.SmartAutomation.CurrentMode,
+        state.SmartAutomation.CandidateMode,
+        state.SmartAutomation.CandidateSamples,
+        state.SmartAutomation.LastReason,
+        state.SmartAutomation.MatchedRule);
+
+    private void WriteRuntime(bool force = false)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (!force && now - lastRuntimeWrite < TimeSpan.FromSeconds(60)) return;
+        try
+        {
+            var path = Path.Combine(Path.GetDirectoryName(log.FilePath)!, "runtime.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var temporary = path + ".tmp";
+            var record = new
+            {
+                Version = "OpenSynapse",
+                Health = health,
+                ConsecutiveFailures = consecutiveFailures,
+                LastHeartbeatUtc = now,
+                LastSuccessfulTickUtc = health == RuntimeHealth.Healthy ? now : (DateTimeOffset?)null
+            };
+            File.WriteAllText(temporary, JsonSerializer.Serialize(record, AgentJson.Options));
+            File.Move(temporary, path, true);
+            lastRuntimeWrite = now;
+        }
+        catch { }
+    }
+
+    private static int ResolveQuietCpuMax(OpenSynapseConfig config, int? batteryPercent)
+    {
+        if (batteryPercent is null || batteryPercent >= config.QuietCpuMediumThreshold)
+            return config.QuietCpuMaxHighBattery;
+        if (batteryPercent >= config.QuietCpuLowThreshold)
+            return config.QuietCpuMaxMediumBattery;
+        return config.QuietCpuMaxLowBattery;
     }
 
     private AgentResponse RunSelfTest()
@@ -387,6 +544,19 @@ internal sealed class AgentController
         catch (Exception ex)
         {
             checks.Add(new DiagnosticCheck("Displays", DiagnosticStatus.Failed, ex.Message));
+        }
+
+        try
+        {
+            var dynamic = PowerPilotNative.DynamicRefreshManager.GetStatus();
+            checks.Add(new DiagnosticCheck(
+                "Native dynamic refresh",
+                dynamic.Supported ? DiagnosticStatus.Passed : DiagnosticStatus.Warning,
+                dynamic.Message));
+        }
+        catch (Exception ex)
+        {
+            checks.Add(new DiagnosticCheck("Native dynamic refresh", DiagnosticStatus.Warning, ex.Message));
         }
 
         try

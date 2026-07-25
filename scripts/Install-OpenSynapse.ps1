@@ -65,5 +65,7 @@ try {
 finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($shell) }
 if (-not (Test-Path -LiteralPath $layout.ShortcutPath -PathType Leaf)) { throw 'Start menu shortcut verification failed.' }
 
+Set-OpenSynapseAppAutostart -Layout $layout
+
 Start-ScheduledTask -TaskName $layout.TaskName
 Write-Host "OpenSynapse installed at $($layout.InstallDirectory)."

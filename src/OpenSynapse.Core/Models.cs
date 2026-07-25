@@ -31,6 +31,13 @@ public enum SupplyType
     Battery
 }
 
+public enum RuntimeHealth
+{
+    Starting,
+    Healthy,
+    Recovering
+}
+
 public enum RefreshPolicy
 {
     FollowMode,
@@ -38,7 +45,8 @@ public enum RefreshPolicy
     Maximum,
     Fixed60,
     Fixed120,
-    Fixed240
+    Fixed240,
+    DynamicNative
 }
 
 public sealed record DisplayPolicySettings(
@@ -166,6 +174,11 @@ public enum AgentOperation
     SetSelection,
     SetDisplayPolicy,
     SetQuietMaintenance,
+    SetApplicationRules,
+    SetTemporaryMode,
+    ClearTemporaryMode,
+    ApplyDisplayPolicyNow,
+    ExportDiagnostics,
     Restore,
     UninstallCleanup,
     ListDevices,
@@ -183,7 +196,10 @@ public sealed record AgentRequest(
     int? PollingRate = null,
     int? ProductId = null,
     DisplayPolicySettings? DisplayPolicy = null,
-    QuietMaintenanceSettings? QuietMaintenance = null);
+    QuietMaintenanceSettings? QuietMaintenance = null,
+    IReadOnlyList<ApplicationRule>? ApplicationRules = null,
+    int? TemporaryMinutes = null,
+    bool TemporaryUntilPowerChange = false);
 
 public sealed record RazerDevice(
     int VendorId,
@@ -209,7 +225,34 @@ public sealed record AgentStatus(
     IReadOnlyList<RazerDevice> RazerDevices,
     DisplayPolicySettings? DisplayPolicy = null,
     QuietMaintenanceSettings? QuietMaintenance = null,
-    IReadOnlyList<string>? WakeArmedDevices = null);
+    IReadOnlyList<string>? WakeArmedDevices = null,
+    SmartAutomationStatus? SmartAutomation = null,
+    TelemetrySnapshot? Telemetry = null,
+    TemporaryModeState? TemporaryMode = null,
+    RuntimeHealth Health = RuntimeHealth.Starting,
+    string? DiagnosticsPath = null,
+    IReadOnlyList<ApplicationRule>? ApplicationRules = null);
+
+public sealed record SmartAutomationStatus(
+    OperatingMode? CurrentMode,
+    OperatingMode? CandidateMode,
+    int CandidateSamples,
+    string Reason,
+    string? MatchedRule);
+
+public sealed record TelemetrySnapshot(
+    double CpuPercent,
+    double GpuPercent,
+    string? ForegroundProcess,
+    bool ForegroundFullscreen,
+    bool SessionLocked,
+    double? BatteryDischargeWatts = null,
+    double? BatteryChargeWatts = null,
+    double? BatteryRemainingMwh = null,
+    double? BatteryVoltageMv = null,
+    double? EstimatedHours = null,
+    string Confidence = "Unavailable",
+    IReadOnlyList<string>? RunningProcesses = null);
 
 public sealed record AgentResponse(
     bool Success,
