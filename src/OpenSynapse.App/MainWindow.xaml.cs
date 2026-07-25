@@ -1,7 +1,9 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Windows;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using OpenSynapse.Core;
 using Controls = System.Windows.Controls;
@@ -14,8 +16,12 @@ public partial class MainWindow : Window
     private readonly AgentClient agent = new();
     private readonly Forms.NotifyIcon tray;
     private readonly System.Drawing.Icon trayIcon;
+    private readonly DispatcherTimer statusTimer;
     private readonly List<ApplicationRule> applicationRules = [];
     private ModeSelection selection = ModeSelection.Auto;
+    private bool statusRequestInProgress;
+    private bool localAgentStartAttempted;
+    private Process? localAgentProcess;
     private bool exiting;
 
     public MainWindow()
@@ -44,12 +50,24 @@ public partial class MainWindow : Window
         tray.ContextMenuStrip.Items.Add("Open", null, (_, _) => Dispatcher.Invoke(ShowWindow));
         tray.ContextMenuStrip.Items.Add("Exit and restore", null, (_, _) => Dispatcher.Invoke(async () => await ExitAsync()));
         SystemEvents.PowerModeChanged += PowerModeChanged;
+        statusTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromSeconds(3)
+        };
+        statusTimer.Tick += StatusTimer_Tick;
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
         UpdatePowerText();
-        await RefreshAsync();
+        statusTimer.Start();
+        await RefreshAgentAsync();
+    }
+
+    private async void StatusTimer_Tick(object? sender, EventArgs e)
+    {
+        if (statusRequestInProgress || exiting) return;
+        await RefreshAsync(logConnectionFailure: false);
     }
 
     private void PowerModeChanged(object sender, PowerModeChangedEventArgs e)
@@ -188,17 +206,60 @@ public partial class MainWindow : Window
     private async Task SelectAsync(ModeSelection value)
     {
         ModeText.Text = $"Selection: {value}";
+        DashboardModeText.Text = ModeText.Text;
         if (!await SendAsync(new AgentRequest(AgentOperation.SetSelection, Selection: value)))
             await RefreshAsync();
     }
 
-    private async Task RefreshAsync() => await SendAsync(new AgentRequest(AgentOperation.Status));
-
-    private async Task<bool> SendAsync(AgentRequest request)
+    private void UpdateModeButtons(ModeSelection activeSelection)
     {
+        var buttons = new[]
+        {
+            (AutoModeButton, ModeSelection.Auto),
+            (HyperModeButton, ModeSelection.Performance),
+            (BalanceModeButton, ModeSelection.Balanced),
+            (QuietModeButton, ModeSelection.Quiet)
+        };
+        foreach (var (button, mode) in buttons)
+        {
+            var selected = mode == activeSelection;
+            button.Background = selected
+                ? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(68, 214, 44))
+                : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(23, 26, 24));
+            button.Foreground = selected
+                ? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.Black)
+                : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.White);
+        }
+    }
+
+    private async Task<bool> RefreshAsync(bool logConnectionFailure = true) =>
+        await SendAsync(new AgentRequest(AgentOperation.Status), logConnectionFailure);
+
+    private async Task RefreshAgentAsync()
+    {
+        if (await RefreshAsync(logConnectionFailure: false)) return;
+
+        if (!localAgentStartAttempted && TryStartLocalAgent())
+        {
+            localAgentStartAttempted = true;
+            for (var attempt = 0; attempt < 12; attempt++)
+            {
+                await Task.Delay(500);
+                if (await RefreshAsync(logConnectionFailure: false)) return;
+            }
+        }
+
+        Log("OpenSynapse.Agent is not connected. Start the elevated Agent or run the installed OpenSynapse task.");
+    }
+
+    private async Task<bool> SendAsync(AgentRequest request, bool logConnectionFailure = true)
+    {
+        if (statusRequestInProgress && request.Operation == AgentOperation.Status) return false;
+        if (request.Operation == AgentOperation.Status) statusRequestInProgress = true;
         try
         {
             var response = await agent.SendAsync(request);
+            SetAgentConnected();
             Log(response.Message);
             foreach (var diagnostic in response.Diagnostics ?? [])
                 Log($"{diagnostic.Status}: {diagnostic.Name} — {diagnostic.Message}");
@@ -207,9 +268,81 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            Log(ex.Message);
+            SetAgentDisconnected(ex.Message);
+            if (logConnectionFailure) Log(ex.Message);
             return false;
         }
+        finally
+        {
+            if (request.Operation == AgentOperation.Status) statusRequestInProgress = false;
+        }
+    }
+
+    private void SetAgentConnected()
+    {
+        if (HealthText.Text == "Agent offline") Log("OpenSynapse.Agent connected; live telemetry is active.");
+    }
+
+    private void SetAgentDisconnected(string error)
+    {
+        HealthText.Text = "Agent offline";
+        HealthText.Foreground = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.Orange);
+        DashboardPowerText.Text = "Power: Agent unavailable";
+        DashboardModeText.Text = "Selection: —    Target: —    Active: —    Health: Agent offline";
+        SmartReasonText.Text = "OpenSynapse Agent is not connected. Starting local Agent or waiting for the installed elevated task…";
+        TelemetryText.Text = $"CPU / GPU / foreground unavailable · {error}";
+        StatusProfileValue.Text = "Offline";
+        StatusCpuValue.Text = "Sampling";
+        StatusGpuValue.Text = "Sampling";
+        StatusBatteryValue.Text = "Unavailable";
+        StatusRateValue.Text = "0 W";
+        StatusSupplyValue.Text = "Unavailable";
+        StatusDgpuValue.Text = "Unavailable";
+        StatusHealthValue.Text = "Offline";
+    }
+
+    private bool TryStartLocalAgent()
+    {
+        var agentPath = FindLocalAgentExecutable();
+        if (agentPath is null) return false;
+        try
+        {
+            localAgentProcess = Process.Start(new ProcessStartInfo
+            {
+                FileName = agentPath,
+                Arguments = "serve",
+                WorkingDirectory = Path.GetDirectoryName(agentPath)!,
+                UseShellExecute = true,
+                Verb = "runas",
+                WindowStyle = ProcessWindowStyle.Hidden
+            });
+            Log("OpenSynapse.Agent was not running; requested an elevated local Agent. If UAC was cancelled, start it manually.");
+            return localAgentProcess is not null;
+        }
+        catch (Win32Exception ex)
+        {
+            Log($"Could not start the elevated Agent: {ex.Message}");
+            return false;
+        }
+        catch (InvalidOperationException ex)
+        {
+            Log($"Could not start the Agent: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static string? FindLocalAgentExecutable()
+    {
+        var baseDirectory = new DirectoryInfo(AppContext.BaseDirectory);
+        var candidates = new[]
+        {
+            Path.Combine(baseDirectory.FullName, "..", "Agent", "OpenSynapse.Agent.exe"),
+            Path.Combine(baseDirectory.FullName, "..", "..", "..", "..", "OpenSynapse.Agent", "bin", "Debug", "net10.0-windows", "OpenSynapse.Agent.exe"),
+            Path.Combine(baseDirectory.FullName, "..", "..", "..", "..", "OpenSynapse.Agent", "bin", "Release", "net10.0-windows", "OpenSynapse.Agent.exe")
+        };
+        return candidates
+            .Select(Path.GetFullPath)
+            .FirstOrDefault(File.Exists);
     }
 
     private void UpdateStatus(AgentStatus status)
@@ -217,12 +350,19 @@ public partial class MainWindow : Window
         selection = status.Selection;
         var battery = status.BatteryPercent is int percent ? $" / {percent}%" : string.Empty;
         var adapterLimit = status.AdapterLimitWatts is double watts ? $" / {watts:0.#} W GPU limit" : string.Empty;
-        PowerText.Text = $"Power: {GetSupplyDisplayName(status.SupplyType)}{battery}{adapterLimit}";
-        ModeText.Text = $"Selection: {GetSelectionDisplayName(status.Selection)}   Active: {GetModeDisplayName(status.ActiveMode)}";
+        var powerText = $"Power: {GetSupplyDisplayName(status.SupplyType)}{battery}{adapterLimit}";
+        var modeText = $"Selection: {GetSelectionDisplayName(status.Selection)}   Target: {GetModeDisplayName(status.SmartAutomation?.CurrentMode)}   Active: {GetModeDisplayName(status.ActiveMode)}   Health: {status.Health}";
+        PowerText.Text = powerText;
+        ModeText.Text = modeText;
+        DashboardPowerText.Text = powerText;
+        DashboardModeText.Text = modeText;
         HealthText.Text = status.Health.ToString();
         HealthText.Foreground = status.Health == RuntimeHealth.Healthy
             ? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(68, 214, 44))
             : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.Orange);
+        StatusProfileValue.Text = GetModeDisplayName(status.ActiveMode);
+        StatusHealthValue.Text = status.Health.ToString();
+        UpdateModeButtons(status.Selection);
         if (status.SmartAutomation is not null)
         {
             SmartReasonText.Text = status.SmartAutomation.Reason;
@@ -243,6 +383,21 @@ public partial class MainWindow : Window
                 ? $" · dGPU activity suspected ({status.SmartAutomation.DgpuActivityConfidence})"
                 : string.Empty;
             TelemetryText.Text = $"{cpu} · {gpu} · {dgpu} · {ema} · foreground {status.Telemetry.ForegroundProcess ?? "none"}{leak}";
+            StatusCpuValue.Text = status.Telemetry.CpuPercent >= 0 ? $"{status.Telemetry.CpuPercent:0.#}%" : "Sampling";
+            StatusGpuValue.Text = status.Telemetry.GpuPercent >= 0 ? $"{status.Telemetry.GpuPercent:0.#}%" : "Sampling";
+            StatusBatteryValue.Text = status.BatteryPercent is int batteryPercent ? $"{batteryPercent}%" : "Unavailable";
+            StatusRateValue.Text = status.Telemetry.BatteryDischargeWatts is double discharge && discharge > 0
+                ? $"-{discharge:0.#} W"
+                : status.Telemetry.BatteryChargeWatts is double charge && charge > 0
+                    ? $"+{charge:0.#} W"
+                    : "0 W";
+            StatusSupplyValue.Text = GetSupplyDisplayName(status.SupplyType);
+            StatusDgpuValue.Text = status.SmartAutomation?.DgpuActivitySuspected == true
+                ? $"Active ({status.SmartAutomation.DgpuActivityConfidence})"
+                : "No leak";
+            StatusDgpuValue.Foreground = status.SmartAutomation?.DgpuActivitySuspected == true
+                ? new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.Orange)
+                : new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.White);
         }
         TemporaryText.Text = status.TemporaryMode is { } temporary
             ? temporary.UntilPowerChange
@@ -312,15 +467,25 @@ public partial class MainWindow : Window
         ? value
         : throw new InvalidDataException($"{name} must be a number.");
 
-    private void UpdatePowerText() => PowerText.Text = $"Power: {GetPowerSource()}";
+    private void UpdatePowerText()
+    {
+        var source = GetPowerSource() switch
+        {
+            PowerSource.Ac => "AC",
+            PowerSource.Battery => "Battery",
+            _ => "Unknown power source"
+        };
+        PowerText.Text = $"Power: {source}";
+        DashboardPowerText.Text = PowerText.Text;
+    }
 
     private static string GetSupplyDisplayName(SupplyType supplyType) => supplyType switch
     {
-        SupplyType.HighPowerAc => "verified high-power AC",
-        SupplyType.LowPowerPd => "USB-C PD / low-power AC",
-        SupplyType.UnknownAc => "AC (unverified)",
-        SupplyType.Battery => "battery",
-        _ => "unknown"
+        SupplyType.HighPowerAc => "280W-class AC",
+        SupplyType.LowPowerPd => "USB-C PD",
+        SupplyType.UnknownAc => "unverified AC",
+        SupplyType.Battery => "Battery",
+        _ => "Unknown"
     };
 
     private static string GetModeDisplayName(OperatingMode? mode) => mode switch
@@ -378,6 +543,7 @@ public partial class MainWindow : Window
             return;
         }
         SystemEvents.PowerModeChanged -= PowerModeChanged;
+        statusTimer.Stop();
         tray.Visible = false;
         tray.Dispose();
         trayIcon.Dispose();

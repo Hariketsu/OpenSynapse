@@ -68,7 +68,9 @@ dotnet build OpenSynapse.sln --no-restore
 dotnet test OpenSynapse.sln --no-build
 ```
 
-先在管理员终端启动 Agent，再从普通终端启动 UI：
+发布目录中直接启动 `artifacts\publish\App\OpenSynapse.App.exe` 即可。UI 会先连接已安装的常驻 Agent；如果 Agent 尚未运行，会请求 UAC 并自动启动同目录下的 `OpenSynapse.Agent.exe serve`。若取消 UAC，UI 会显示 `Agent offline`，不会再停留在无提示的 `Starting / Waiting for telemetry` 占位状态。
+
+从源码运行时，也可以分别在管理员终端启动 Agent，再从普通终端启动 UI：
 
 ```powershell
 dotnet run --project src/OpenSynapse.Agent -- serve
