@@ -19,7 +19,9 @@ internal sealed class AgentClient
             ".",
             "OpenSynapse.Agent",
             PipeDirection.InOut,
-            PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+            // The server applies an explicit same-user ACL and low-integrity
+            // label so an unelevated UI can talk to the elevated Agent.
+            PipeOptions.Asynchronous);
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromSeconds(3));
         await pipe.ConnectAsync(timeout.Token);

@@ -1,4 +1,5 @@
 using System.IO.Pipes;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Win32;
@@ -25,12 +26,15 @@ internal sealed class AgentServer(AgentController controller)
         {
             while (!cancellationToken.IsCancellationRequested)
             {
-                await using var pipe = new NamedPipeServerStream(
+                await using var pipe = NamedPipeServerStreamAcl.Create(
                     "OpenSynapse.Agent",
                     PipeDirection.InOut,
                     1,
                     PipeTransmissionMode.Byte,
-                    PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly);
+                    PipeOptions.Asynchronous,
+                    0,
+                    0,
+                    CreatePipeSecurity());
                 await pipe.WaitForConnectionAsync(cancellationToken);
                 if (await HandleConnectionAsync(pipe, cancellationToken)) break;
             }
@@ -135,6 +139,19 @@ internal sealed class AgentServer(AgentController controller)
 
     internal static bool IsPipeOperationAllowed(AgentOperation operation) =>
         operation != AgentOperation.UninstallCleanup;
+
+    private static System.IO.Pipes.PipeSecurity CreatePipeSecurity()
+    {
+        var userSid = WindowsIdentity.GetCurrent().User?.Value
+            ?? throw new InvalidOperationException("The current Windows user SID is unavailable.");
+        var security = new System.IO.Pipes.PipeSecurity();
+        // The agent runs elevated, but the UI is intentionally unelevated. The
+        // pipe is restricted to this user while its integrity label permits the
+        // same user's medium-integrity desktop process to connect.
+        security.SetSecurityDescriptorSddlForm(
+            $"D:(A;;GA;;;{userSid})(A;;GA;;;SY)(A;;GA;;;BA)S:(ML;;NW;;;LW)");
+        return security;
+    }
 
     internal static async Task<string?> ReadBoundedLineAsync(
         TextReader reader,

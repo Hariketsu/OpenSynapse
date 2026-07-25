@@ -89,14 +89,30 @@ public partial class MainWindow : Window
     private void SettingsNav_Click(object sender, RoutedEventArgs e) => MainTabs.SelectedIndex = 2;
     private void DiagnosticsNav_Click(object sender, RoutedEventArgs e) => MainTabs.SelectedIndex = 3;
     private void AboutNav_Click(object sender, RoutedEventArgs e) => MainTabs.SelectedIndex = 4;
-    private void TitleBar_MouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    private void TitleBar_PreviewMouseLeftButtonDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
+        if (IsInsideButton(e.OriginalSource as System.Windows.DependencyObject)) return;
         if (e.ClickCount == 2)
         {
             Maximize_Click(sender, e);
             return;
         }
-        if (e.LeftButton == System.Windows.Input.MouseButtonState.Pressed) DragMove();
+        if (e.LeftButton == System.Windows.Input.MouseButtonState.Pressed)
+        {
+            e.Handled = true;
+            try { DragMove(); }
+            catch (InvalidOperationException) { }
+        }
+    }
+
+    private static bool IsInsideButton(System.Windows.DependencyObject? source)
+    {
+        while (source is not null)
+        {
+            if (source is Controls.Button) return true;
+            source = System.Windows.Media.VisualTreeHelper.GetParent(source);
+        }
+        return false;
     }
 
     private void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;

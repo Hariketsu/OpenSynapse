@@ -35,7 +35,7 @@ flowchart LR
 
 ### OpenSynapse.App
 
-Runs without elevation. It displays status, edits validated display-policy settings, and sends typed requests to the agent. Closing the window hides it; explicit exit requests restoration and agent shutdown. It never writes configuration, Windows policy, or HID state directly.
+Runs without elevation. It displays status, edits validated display-policy settings, and sends typed requests to the agent. Closing the window hides it; explicit exit requests restoration and agent shutdown. It never writes configuration, Windows policy, or HID state directly. The Agent pipe uses an explicit same-user ACL plus a low-integrity label, so this unelevated desktop process can connect to the elevated Agent without granting access to other users.
 
 The App and serving Agent each hold a per-user named single-instance lease. A second App launch signals the existing window to activate; a second serving Agent exits without competing for policy ownership. The App uses `OpenSynapse.Desktop` as its explicit Windows AppUserModelID and uses the migrated OpenSynapse application/tray ICO resources.
 
