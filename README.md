@@ -7,7 +7,7 @@
 OpenSynapse is a local-first, open-source Windows control center for supported Razer hardware and system policies. Its goal is to replace opaque background software with explicit capabilities, inspectable state changes, and reliable rollback.
 
 > [!WARNING]
-> OpenSynapse is experimental, distributed as source only, and has no stable release. The current DeathAdder implementation still requires verification on target hardware. Keep Razer Synapse closed while testing device control.
+> The power/display runtime is now based directly on the field-tested PowerPilot 2.4.1 implementation. DeathAdder writes remain hardware-gated and still require verification on a connected target device. Keep Razer Synapse closed while testing device control.
 
 ## Principles
 
@@ -23,9 +23,9 @@ OpenSynapse currently implements the M0–M3 development slice. Implementation d
 
 | Area | Current capability | Maturity |
 | --- | --- | --- |
-| Windows policies | Adapter-aware Auto, Performance, Balanced, and Quiet selection; power plans; refresh rate; Advanced Color/HDR; internal brightness; display scaling; optional exact-name wake-device control | Implemented, target-Windows validation pending |
-| State restoration | Atomic captured state and verified power-plan rollback | Implemented, target-Windows validation pending |
-| Desktop control | Non-elevated WPF panel and tray UI connected to a per-user elevated agent | Implemented, target-Windows validation pending |
+| Windows policies | Adapter-aware Auto, Hyper, Balance, and Quiet selection; power plans; refresh rate; Advanced Color/HDR; internal brightness; display scaling; optional wake-device control | Live installation validated on the target RZ09-0528 |
+| State restoration | Atomic captured state, legacy .NET rollback, PowerPilot takeover, and verified power-plan rollback | Migration validated on the target system |
+| Desktop control | Single elevated PowerShell 5.1/WinForms tray process, installed as a delayed highest-privilege per-user task | Installed and live-validated |
 | Razer mouse | Discovery, status, DPI, and standard-receiver polling control | Experimental |
 
 ### Device matrix
@@ -41,90 +41,76 @@ OpenSynapse currently implements the M0–M3 development slice. Implementation d
 
 ## Architecture
 
-OpenSynapse separates the ordinary desktop UI from privileged Windows operations:
+The release runtime intentionally follows PowerPilot 2.4.1's proven single-process model:
 
 ```text
-OpenSynapse.App  ── current-user named pipe ──>  OpenSynapse.Agent
-       │                                             │
-       └──────── shared request models ──────────────┤
-                                                     ├─ Windows policy APIs / powercfg
-                                                     └─ capability-gated Razer HID
+OpenSynapse scheduled task (highest privileges, STA)
+        │
+        └─ OpenSynapse.ps1 (WinForms UI, tray, automation)
+                └─ dynamically compiled OpenSynapse.Native.cs
+                        ├─ display, battery and GPU telemetry
+                        ├─ Windows policy APIs / powercfg
+                        └─ capability-gated DeathAdder HID reports
 ```
 
-The agent owns mode selection, captured state, rollback, and hardware writes. The UI never writes privileged system or HID state directly. See [Architecture](docs/ARCHITECTURE.md) and the shared [domain language](CONTEXT.md).
+This removes the WPF-to-Agent startup and named-pipe failure mode that made the previous migration appear online while its control backend was unavailable. See [Architecture](docs/ARCHITECTURE.md).
 
 ## Build and test
 
 Requirements:
 
 - Windows 11
-- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0), matching [`global.json`](global.json)
-- An elevated PowerShell terminal only for system-policy and hardware smoke tests
+- Windows PowerShell 5.1
+- Administrator approval for installation and policy changes
 
 ```powershell
-dotnet restore OpenSynapse.sln
-dotnet build OpenSynapse.sln --configuration Release --no-restore
-dotnet test OpenSynapse.sln --configuration Release --no-build --no-restore
+powershell -ExecutionPolicy Bypass -File scripts\Test-InstallerDefinitions.ps1
+powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1
 ```
 
-Start the elevated agent, then launch the UI from a normal terminal:
-
-```powershell
-dotnet run --project src/OpenSynapse.Agent -- serve
-dotnet run --project src/OpenSynapse.App
-```
-
-Run read-only diagnostics from any terminal:
-
-```powershell
-dotnet run --project src/OpenSynapse.Agent -- self-test
-```
+The retained .NET solution contains protocol/unit-test code from the previous implementation and can still be tested separately, but it is no longer the published desktop runtime.
 
 ### Publish and install
 
-Create self-contained Windows binaries, then run the installer from an elevated PowerShell terminal belonging to the target user:
+Create the renamed PowerPilot-compatible package, then install it:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\Publish-OpenSynapse.ps1
 powershell -ExecutionPolicy Bypass -File scripts\Install-OpenSynapse.ps1
 ```
 
-Pass `-FrameworkDependent` only when the matching .NET 10 Desktop Runtime is already registered on the target machine.
-
-The installer copies Agent/App outputs under `%ProgramFiles%\OpenSynapse`, registers a delayed per-user elevated Agent task, and creates a Start menu shortcut for the non-elevated App. To uninstall, restore captured state, remove managed power plans, and delete installed files:
+The package is written to `artifacts\publish\OpenSynapse` and `artifacts\OpenSynapse-2.4.1.zip`. The installer first asks the obsolete .NET Agent to restore its captured state when that binary is available; otherwise it restores the legacy power, display, brightness and wake state directly. If an installed PowerPilot runtime exists, its configuration and recovery state are archived, its own verified uninstaller restores Windows, and that configuration is promoted to OpenSynapse. The installer then removes the obsolete split runtime, copies the PowerShell implementation under `%ProgramFiles%\OpenSynapse`, registers one delayed highest-privilege per-user task, and creates an OpenSynapse Start menu shortcut. To uninstall and restore the captured state:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\Uninstall-OpenSynapse.ps1
 ```
 
-Use `-KeepUserData` to retain `%LOCALAPPDATA%\OpenSynapse`. The uninstaller stops before deleting anything if state restoration or managed-plan cleanup cannot be confirmed. The install/uninstall definitions are tested, but a live installation remains a target-Windows validation gate.
-
-On a disposable or fully understood Windows configuration, run the reversible elevated smoke test:
+On a disposable or fully understood Windows configuration, run the full reversible administrator suite:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1
+powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1 -AdminRelease
 
 # Optional: re-write the mouse's currently reported values to verify HID transport.
 powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1 -TestMouseWrites
 ```
 
-The script verifies Performance/Balanced/Quiet application (Balanced when battery is at least 50%), named-pipe lifecycle, agent shutdown, power-plan and wake-permission rollback, and captured-state cleanup. The mouse option requires a readable DeathAdder V3 Pro and does not intentionally select new values.
+The mouse option requires a readable DeathAdder V3 Pro and writes its currently reported values back without intentionally choosing new settings.
 
 ## Configuration
 
-The desktop panel reads and edits policy through the elevated agent. The agent stores it in `%LOCALAPPDATA%\OpenSynapse\config.json` with a versioned schema: selected mode, Balanced battery threshold, optional Advanced Color/brightness/scaling management, internal/external scaling, Balanced/Quiet brightness, refresh policy (`FollowMode`, `Unmanaged`, `Maximum`, `Fixed60`, `Fixed120`, or `Fixed240`), and optional Quiet wake-device names. Invalid or newer configuration is rejected without overwriting the file. Before applying changed display settings, the agent confirms restoration of the previous display snapshot; captured rollback data remains separate in `state.json`.
+The tray runtime stores policy in `%LOCALAPPDATA%\OpenSynapse\config.json` and rollback state in `state.json`. It retains PowerPilot 2.4.1's Smart Auto, application rules, supply debounce, display policy, battery telemetry, health backoff, and reversible state model.
 
-Quiet wake-device management is disabled by default. When enabled, names are matched exactly against `powercfg /devicequery wake_armed`; there are no default devices or wildcard patterns. Rollback intent is persisted before a permission is disabled, and every tracked permission is verified when leaving Quiet, exiting, or uninstalling. OpenSynapse does not stop applications or vendor services.
+The PowerPilot-compatible defaults enable Quiet maintenance. Wake devices are matched by configured name fragments (initially MediaTek Wi-Fi, HID-compliant mouse, and USB4); tracked permissions are restored when leaving Quiet, exiting, or uninstalling. Quiet may also close configured high-drain helper processes and pause configured Armoury Crate/ASUS services. Review these lists in `config.json` if those applications or devices must remain active.
 
 ## Safety and privacy
 
 - Razer writes require an exact supported VID/PID and Consumer HID usage page.
 - DPI and polling inputs are validated before packet construction.
 - Responses must match the request transaction, command class, command ID, and checksum.
-- Privileged IPC is restricted to the current Windows user.
+- The installed runtime runs as a single per-user highest-privilege scheduled task; no named-pipe IPC is required.
 - Configuration and captured system state are stored separately and atomically under `%LOCALAPPDATA%\OpenSynapse`.
-- Optional Quiet wake-device changes require an exact user allowlist and retain verified rollback state; process and vendor-service termination are not implemented.
-- Agent events are written locally to a bounded `logs\agent.log` with one rotated backup.
+- Quiet wake-device and service changes retain rollback state; configured process termination is limited to the local allowlists inherited from PowerPilot.
+- Runtime events are written locally to bounded `OpenSynapse.log` and `telemetry.jsonl` files.
 - Adapter classification invokes `nvidia-smi` with a read-only query and fails safe to Quiet when the power limit cannot be verified.
 - The current implementation contains no telemetry, analytics, updater, account system, or runtime network client.
 

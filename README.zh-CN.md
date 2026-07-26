@@ -7,7 +7,7 @@
 OpenSynapse 是一个本地优先的开源 Windows 控制中心，用于管理受支持的 Razer 硬件和系统策略。项目的目标是用能力明确、状态变化可检查、可靠回滚的开放实现，替代不透明的常驻软件。
 
 > [!WARNING]
-> OpenSynapse 仍处于实验阶段，目前只提供源码，没有稳定版本。现有 DeathAdder 实现仍需在目标硬件上完成验证。测试设备控制时，请关闭 Razer Synapse。
+> 电源与显示运行时现已直接建立在实机验证过的 PowerPilot 2.4.1 上。DeathAdder 写入仍受硬件白名单保护，并需要连接目标设备完成实测。测试设备控制时，请关闭 Razer Synapse。
 
 ## 项目原则
 
@@ -23,10 +23,10 @@ OpenSynapse 已实现 M0–M3 开发切片。完成代码实现不等于通过�
 
 | 领域 | 当前能力 | 成熟度 |
 | --- | --- | --- |
-| Windows 策略 | Smart Auto、Hyper、Balance、Quiet；电源方案、刷新率、Advanced Color/HDR、内屏亮度和显示缩放 | 已实现，等待目标 Windows 验证 |
+| Windows 策略 | Smart Auto、Hyper、Balance、Quiet；电源方案、刷新率、Advanced Color/HDR、内屏亮度和显示缩放 | 已在目标 RZ09-0528 完成真实安装验证 |
 | Smart Auto | 供电、CPU/GPU、前台/全屏应用、应用规则、迟滞、临时模式、dGPU 连续活动诊断 | 已实现；GPU 不可用时安全回退到 CPU/窗口信号 |
-| 状态恢复 | 原始状态原子保存与电源方案恢复验证 | 已实现，等待目标 Windows 验证 |
-| 桌面控制 | 五页深色 WPF 面板和托盘 UI，通过当前用户专用管道连接提权 Agent | 已实现，等待目标 Windows 验证 |
+| 状态恢复 | 原始状态原子保存、旧 .NET 恢复、PowerPilot 接管与电源方案恢复验证 | 已在目标系统完成迁移验证 |
+| 桌面控制 | 单个提权的 PowerShell 5.1/WinForms 托盘进程，通过延迟且最高权限的当前用户计划任务启动 | 已安装并完成现场验证 |
 | Razer 鼠标 | 设备发现、状态、DPI 和标准接收器轮询率控制 | 实验性 |
 
 ### 设备矩阵
@@ -42,59 +42,63 @@ OpenSynapse 已实现 M0–M3 开发切片。完成代码实现不等于通过�
 
 ## 架构
 
-OpenSynapse 将普通权限桌面 UI 与高权限 Windows 操作分离：
+发布版现在沿用 PowerPilot 2.4.1 已验证的单进程模型：
 
 ```text
-OpenSynapse.App  ── 当前用户专用命名管道 ──>  OpenSynapse.Agent
-       │                                               │
-       └────────── 共享请求模型 ───────────────────────┤
-                                                       ├─ Windows 策略 API / powercfg
-                                                       └─ 能力门控的 Razer HID
+OpenSynapse 计划任务（最高权限、STA）
+        │
+        └─ OpenSynapse.ps1（WinForms UI、托盘、自动化）
+                └─ 动态编译 OpenSynapse.Native.cs
+                        ├─ 显示、电池和 GPU 遥测
+                        ├─ Windows 策略 API / powercfg
+                        └─ 受白名单保护的 DeathAdder HID 报告
 ```
 
-Agent 负责模式选择、状态捕获、回滚和硬件写入；UI 不直接写入高权限系统状态或 HID。详情见[架构文档](docs/ARCHITECTURE.md)和共享[领域语言](CONTEXT.md)。
+这样移除了上一版 WPF 与 Agent 之间的启动、UAC 和命名管道故障点。详情见[架构文档](docs/ARCHITECTURE.md)。
 
 ## 构建与测试
 
 要求：
 
 - Windows 11
-- 与 [`global.json`](global.json) 匹配的 [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0)
-- 仅系统策略和硬件冒烟测试需要管理员 PowerShell
+- Windows PowerShell 5.1
+- 安装和系统策略变更需要管理员确认
 
 ```powershell
-dotnet restore OpenSynapse.sln
-dotnet build OpenSynapse.sln --no-restore
-dotnet test OpenSynapse.sln --no-build
-```
-
-发布目录中直接启动 `artifacts\publish\App\OpenSynapse.App.exe` 即可。UI 会先连接已安装的常驻 Agent；如果 Agent 尚未运行，会请求 UAC 并自动启动同目录下的 `OpenSynapse.Agent.exe serve`。若取消 UAC，UI 会显示 `Agent offline`，不会再停留在无提示的 `Starting / Waiting for telemetry` 占位状态。
-
-从源码运行时，也可以分别在管理员终端启动 Agent，再从普通终端启动 UI：
-
-```powershell
-dotnet run --project src/OpenSynapse.Agent -- serve
-dotnet run --project src/OpenSynapse.App
-```
-
-在可随时恢复、配置完全明确的 Windows 环境中运行可逆冒烟测试：
-
-```powershell
+powershell -ExecutionPolicy Bypass -File scripts\Test-InstallerDefinitions.ps1
 powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1
+```
+
+保留的 .NET 解决方案仍包含上一版实现的协议和单元测试代码，但不再作为发布版桌面运行时。
+
+发布并安装：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\Publish-OpenSynapse.ps1
+powershell -ExecutionPolicy Bypass -File scripts\Install-OpenSynapse.ps1
+```
+
+发布结果位于 `artifacts\publish\OpenSynapse` 和 `artifacts\OpenSynapse-2.4.1.zip`。如果旧 .NET Agent 仍存在，安装器会先调用它恢复已捕获状态；如果旧二进制已不存在，则直接恢复旧状态中的电源计划、显示、亮度和唤醒权限。如果检测到已安装且正在运行的 PowerPilot，安装器会归档它的配置和恢复状态，调用 PowerPilot 自身的卸载流程恢复 Windows，并把用户配置提升为 OpenSynapse 配置。随后才会清理旧运行时、安装 `%ProgramFiles%\OpenSynapse`、注册唯一的最高权限当前用户任务并创建开始菜单快捷方式。
+
+在可随时恢复、配置完全明确的 Windows 环境中运行完整管理员测试：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1 -AdminRelease
 
 # 可选：把鼠标当前报告的数值写回，用于验证 HID 传输。
 powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1 -TestMouseWrites
 ```
 
-脚本会验证 Performance/Quiet 应用、命名管道生命周期、Agent 关闭、电源方案回滚和状态快照清理。鼠标选项需要可读取的 DeathAdder V3 Pro，并且不会主动选择新的参数。
+鼠标选项需要可读取的 DeathAdder V3 Pro，并把当前值写回，不会主动选择新的参数。
 
 ## 安全与隐私
 
 - Razer 写入要求精确匹配受支持的 VID/PID 和 Consumer HID Usage Page。
 - DPI 和轮询率在构造报文前完成验证。
 - 响应必须匹配事务、命令类、命令 ID 和校验和。
-- 高权限 IPC 只允许当前 Windows 用户访问。
+- 安装版以当前用户的最高权限计划任务单进程运行，不再依赖命名管道 IPC。
 - 捕获的系统状态原子保存到 `%LOCALAPPDATA%\OpenSynapse`。
+- PowerPilot 兼容默认值会在 Quiet 中按配置维护高耗电辅助进程、Armoury Crate/ASUS 服务和唤醒设备；需要保持常驻的项目应先从 `config.json` 白名单中移除。
 - 当前实现只读取本机电池、CPU、前台窗口和 Windows GPU 性能计数器遥测；不包含云分析、自动更新、账户系统或运行时网络客户端。GPU 采样在后台线程运行，电池趋势写入本地 30 秒 JSONL 历史。
 
 安全问题请按 [SECURITY.md](SECURITY.md) 中的私密流程报告，不要创建公开 Issue。

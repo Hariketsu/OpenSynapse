@@ -2,22 +2,58 @@
 param()
 
 $ErrorActionPreference = 'Stop'
-Import-Module (Join-Path $PSScriptRoot 'OpenSynapse.Install.psm1') -Force
-$layout = Get-OpenSynapseInstallLayout -ProgramFilesPath 'C:\Program Files' -AppDataPath 'C:\Users\Test\AppData\Roaming' -LocalAppDataPath 'C:\Users\Test\AppData\Local'
-$taskSpec = Get-OpenSynapseAgentTaskSpec -AgentExecutable $layout.AgentExecutable -UserId 'DOMAIN\TestUser'
-Assert-OpenSynapseTaskSpec -Spec $taskSpec -AgentExecutable $layout.AgentExecutable
+$root = Split-Path -Parent $PSScriptRoot
+$mainPath = Join-Path $root 'src\OpenSynapse.PowerShell\OpenSynapse.ps1'
+$nativePath = Join-Path $root 'src\OpenSynapse.PowerShell\OpenSynapse.Native.cs'
+$publishPath = Join-Path $PSScriptRoot 'Publish-OpenSynapse.ps1'
+$installPath = Join-Path $PSScriptRoot 'Install-OpenSynapse.ps1'
+$uninstallPath = Join-Path $PSScriptRoot 'Uninstall-OpenSynapse.ps1'
 
-if ($layout.InstallDirectory -ne 'C:\Program Files\OpenSynapse') { throw 'Install directory definition is incorrect.' }
-if ($layout.ShortcutPath -ne 'C:\Users\Test\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\OpenSynapse.lnk') {
-    throw 'Shortcut definition is incorrect.'
-}
-$installSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Install-OpenSynapse.ps1') -Raw
-$uninstallSource = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Uninstall-OpenSynapse.ps1') -Raw
-foreach ($required in @('uninstall-cleanup', 'Remove-Item', 'Register-ScheduledTask', 'Assert-OpenSynapseTaskDefinition', 'OpenSynapse.App.exe', 'Set-OpenSynapseAppAutostart')) {
-    if ($installSource.IndexOf($required, [StringComparison]::Ordinal) -lt 0) { throw "Installer is missing $required." }
-}
-foreach ($required in @('uninstall-cleanup', 'Unregister-ScheduledTask', 'KeepUserData', 'Remove-OpenSynapseAppAutostart')) {
-    if ($uninstallSource.IndexOf($required, [StringComparison]::Ordinal) -lt 0) { throw "Uninstaller is missing $required." }
+foreach ($path in @($mainPath, $nativePath, $publishPath, $installPath, $uninstallPath)) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing installer input: $path" }
 }
 
-Write-Host 'Installer definitions passed.'
+$parseErrors = $null
+[void][Management.Automation.Language.Parser]::ParseFile($mainPath, [ref]$null, [ref]$parseErrors)
+if ($parseErrors.Count -gt 0) { throw "Main script parser errors: $($parseErrors.Message -join '; ')" }
+
+$mainSource = Get-Content -LiteralPath $mainPath -Raw -Encoding UTF8
+$publishSource = Get-Content -LiteralPath $publishPath -Raw -Encoding UTF8
+$installSource = Get-Content -LiteralPath $installPath -Raw -Encoding UTF8
+$uninstallSource = Get-Content -LiteralPath $uninstallPath -Raw -Encoding UTF8
+foreach ($required in @(
+    "`$script:TaskName = 'OpenSynapse'",
+    "`$script:LegacyAgentTaskName = 'OpenSynapse Agent'",
+    'function Register-OpenSynapseTask',
+    'RunLevel Highest',
+    '-ExecutionTimeLimit ([TimeSpan]::Zero)',
+    '-WindowStyle Hidden -STA',
+    'function Remove-LegacyDotNetRuntime',
+    'function Remove-LegacyPowerPilotRuntime',
+    'PowerPilot-2.4.1-migration-',
+    '-File $powerPilotScript -Mode Uninstall',
+    "ValidateSet('Run', 'Open', 'Install', 'Uninstall', 'Status', 'Apply', 'SelfTest')"
+)) {
+    if ($mainSource.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "Installer runtime definition is missing: $required"
+    }
+}
+foreach ($required in @('src\OpenSynapse.PowerShell', 'OpenSynapse-2.4.1.zip', 'Compress-Archive')) {
+    if ($publishSource.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "Publisher definition is missing: $required"
+    }
+}
+if ($installSource.IndexOf('-Mode Install', [StringComparison]::Ordinal) -lt 0) {
+    throw 'Installer wrapper does not invoke OpenSynapse Install mode.'
+}
+if ($uninstallSource.IndexOf('-Mode Uninstall', [StringComparison]::Ordinal) -lt 0) {
+    throw 'Uninstaller wrapper does not invoke OpenSynapse Uninstall mode.'
+}
+
+$ErrorActionPreference = 'Stop'
+Add-Type -Path $nativePath
+if ('SetDpi' -notin [OpenSynapseNative.RazerMouse].GetMethods().Name) {
+    throw 'Published native helper does not include Razer mouse control.'
+}
+
+Write-Host 'OpenSynapse PowerShell installer definitions passed.'

@@ -12,8 +12,8 @@ The roadmap describes validation gates, not delivery dates. A capability moves f
 ## Foundation — M0 to M3
 
 - [x] .NET solution, Windows CI, tests, license, and project documentation.
-- [x] Non-elevated WPF control panel and per-user elevated agent.
-- [x] Adapter-aware Auto, Performance, Balanced, and Quiet policy selection.
+- [x] PowerPilot 2.4.1-compatible elevated WinForms tray/control process with delayed per-user scheduled task.
+  - [x] Adapter-aware Auto, Hyper, Balance, and Quiet policy selection.
 - [x] Captured state and power-plan rollback.
 - [x] Validated desktop editing for display policy, scaling, brightness, and refresh behavior.
 - [x] Default-off, exact-allowlist Quiet wake-device control with durable verified rollback.

@@ -1,0 +1,65 @@
+# OpenSynapse 2.4.1
+
+OpenSynapse 是基于 PowerPilot 2.4.1 重新移植的 Windows 电源、显示与 Razer HID 控制程序。发布版保留原型已验证的单进程 PowerShell 5.1/WinForms 架构，并将产品名、任务、目录、快捷方式和 AppUserModelID 全部更名为 OpenSynapse。
+
+## 功能
+
+- Auto、Hyper、Balance、Quiet 电源模式；
+- 280W 高功率 AC、USB-C PD、电池和未知 AC 分类；
+- CPU/GPU、前台/全屏应用、应用规则与迟滞驱动的 Smart Auto；
+- 临时模式、Quiet 后台维护与唤醒设备管理；
+- HDR、亮度、显示缩放和刷新率策略；
+- 电池、GPU、dGPU 活动、运行健康与诊断导出；
+- 五页深色 UI、自绘可拖动标题栏、托盘与开始菜单快捷方式；
+- DeathAdder V3 Pro 状态、DPI 与标准接收器轮询率控制。
+
+OpenSynapse 只使用公开 Windows 接口和标准 HID feature report。它不写 Razer EC，不控制风扇、TGP 或 MUX，也不安装或替换内核驱动。
+
+## 安装
+
+解压后双击 `Install-OpenSynapse.cmd`，或在 PowerShell 中运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\OpenSynapse.ps1 -Mode Install
+```
+
+确认 UAC 后，安装器会：
+
+1. 恢复并清理旧的 WPF/Agent OpenSynapse；
+2. 如检测到 PowerPilot，归档其配置/状态并调用原卸载入口恢复 Windows；
+3. 将 PowerPilot 配置提升为 OpenSynapse 配置；
+4. 安装到 `%ProgramFiles%\OpenSynapse`；
+5. 注册延迟 30 秒、当前用户、最高权限的 `OpenSynapse` 计划任务；
+6. 创建开始菜单快捷方式并启动托盘。
+
+关闭窗口只会隐藏控制面板，自动化仍在托盘中运行。要完整退出并恢复状态，请在 About 页点击 `Exit and restore`，或运行 `Uninstall-OpenSynapse.cmd`。
+
+## 命令
+
+```powershell
+# 状态
+powershell -ExecutionPolicy Bypass -File .\OpenSynapse.ps1 -Mode Status
+
+# 不改系统的自检
+powershell -ExecutionPolicy Bypass -File .\OpenSynapse.ps1 -Mode SelfTest
+
+# 打开已安装控制面板
+powershell -ExecutionPolicy Bypass -File .\OpenSynapse.ps1 -Mode Open
+```
+
+## Razer 鼠标边界
+
+鼠标控制仅允许 Razer VID `1532`、DeathAdder V3 Pro PID `00B6/00B7/00C2/00C3` 和 HID Usage Page `0x0C`。DPI 范围为 100–30000；标准接收器轮询率为 125/500/1000 Hz。
+
+未检测到白名单设备时写入按钮不会向其他 Razer 设备发送命令。Razer Blade 16（2025）的内置键盘 PID `02C6` 不属于鼠标白名单。
+
+## 数据与恢复
+
+- 配置：`%LOCALAPPDATA%\OpenSynapse\config.json`
+- 回滚状态：`%LOCALAPPDATA%\OpenSynapse\state.json`
+- 运行记录：`%LOCALAPPDATA%\OpenSynapse\runtime.json`
+- 日志：`%LOCALAPPDATA%\OpenSynapse\OpenSynapse.log`
+
+配置和状态采用原子替换并保留备份。旧 .NET schema-10 文件和 PowerPilot 接管记录会以独立迁移文件归档，避免被新运行时误读。
+
+详见 `TEST-REPORT.md`。
