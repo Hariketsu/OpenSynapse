@@ -1,8 +1,20 @@
-# OpenSynapse 2.4.1 重新移植验证报告
+# OpenSynapse 2.4.2 重新移植验证报告
 
 验证日期：2026-07-25
 分支：`dev-echo`
 参考：`ref/PowerPilot2.4.1`
+
+## 2026-07-27 Quiet 2.4.2 发布与本机安装验证
+
+- Ryzen AI 9 365 Quiet DC 曲线：`>=70%` 为 CPU 65% / EPP 90，`30–69%` 为 CPU 60% / EPP 95，`<30%` 为 CPU 50% / EPP 100：通过；
+- 手动 Quiet 在电池、PD 和持续 280W 供电期间保持锁定，不推进 Smart Auto；仅检测到新的 280W 级 `HighPowerAC` 接入时解除锁定并恢复 Auto：通过；
+- OEM 异构核心增减阈值、TGP、风扇和 EC 不写入检查：通过；
+- 非管理员定义/运行时里程碑测试：21/21 通过；
+- 管理员发布测试：24/24 通过，包含临时计划任务与电源方案回读/恢复；
+- .NET Core 38/38、Agent 52/52，Release 构建 0 警告/0 错误，格式检查：通过；
+- 本机安装态回验：版本 2.4.2、运行健康 Healthy、任务 Running/Highest、78 个电源参数、快捷方式、图标与包哈希全部通过；
+- 本机供电识别为 HighPowerAC，安装后配置为 Auto，当前活动档位 Hyper，启动后 Apply 失败数为 0；
+- 发布包：`OpenSynapse-2.4.2.zip` 已生成并通过原生 C# 编译检查。
 
 ## 2026-07-26 Quiet v11 增量验证
 
@@ -35,7 +47,7 @@
 
 安装态测试 `Test-LiveInstallation.ps1` 已通过：
 
-- 版本：2.4.1；
+- 版本：2.4.2；
 - 任务：Running、Highest、Interactive、登录延迟 PT30S；
 - 运行时：PerMonitorV2、`OpenSynapse.Desktop`、Healthy；
 - 当前设备：Razer Blade 16 RZ09-0528；

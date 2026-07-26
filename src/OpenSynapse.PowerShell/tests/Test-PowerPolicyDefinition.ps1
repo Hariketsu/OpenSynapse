@@ -123,7 +123,7 @@ if (-not ($result.HyperSettings -eq 26 -and $result.BalanceSettings -eq 13 -and 
     $result.BalanceDisplayAcSeconds -eq 600 -and $result.BalanceDisplayDcSeconds -eq 300 -and
     $result.BalanceEppAc -eq 50 -and $result.BalanceEppDc -eq 70 -and
     $result.QuietDisplayAcSeconds -eq 300 -and $result.QuietDisplayDcSeconds -eq 120 -and
-    $result.QuietCpuMaxDc -eq 65 -and $result.QuietEppDc -eq 95 -and
+    $result.QuietCpuMaxDc -eq 65 -and $result.QuietEppDc -eq 90 -and
     $result.QuietMinCoresDc -eq 0 -and $result.QuietMinCores1Dc -eq 0 -and
     $result.QuietGpuPreferenceDc -eq 1 -and $result.QuietWakeTimersDc -eq 0 -and
     $result.QuietStandbyNetworkDc -eq 0 -and $result.QuietDcClassSettings -eq 9 -and
@@ -131,7 +131,7 @@ if (-not ($result.HyperSettings -eq 26 -and $result.BalanceSettings -eq 13 -and 
         $_.Setting -in @($script:Guids.ProcessorMaximum1, $script:Guids.ProcessorMaximum2) -and $_.Value -eq 65
     }).Count -eq 2 -and
     @($quietDcValues | Where-Object {
-        $_.Setting -in @($script:Guids.ProcessorEpp1, $script:Guids.ProcessorEpp2) -and $_.Value -eq 95
+        $_.Setting -in @($script:Guids.ProcessorEpp1, $script:Guids.ProcessorEpp2) -and $_.Value -eq 90
     }).Count -eq 2 -and
     @($quietDcValues | Where-Object {
         $_.Setting -in @($script:Guids.ProcessorScheduling, $script:Guids.ProcessorShortScheduling) -and $_.Value -eq 4

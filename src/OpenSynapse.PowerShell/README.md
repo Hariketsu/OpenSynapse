@@ -1,4 +1,4 @@
-# OpenSynapse 2.4.1
+# OpenSynapse 2.4.2
 
 OpenSynapse 是基于 PowerPilot 2.4.1 重新移植的 Windows 电源、显示与 Razer HID 控制程序。发布版保留原型已验证的单进程 PowerShell 5.1/WinForms 架构，并将产品名、任务、目录、快捷方式和 AppUserModelID 全部更名为 OpenSynapse。
 
@@ -17,9 +17,9 @@ OpenSynapse 只使用公开 Windows 接口和标准 HID feature report。它不�
 
 ## 离电 Quiet 策略
 
-Smart Auto 在电池或 USB-C PD 下以 Quiet 为低负载基线，电量不低于 Balance 安全阈值且应用、CPU 或 GPU 负载持续满足条件时可以临时升到 Balance。手动选择 Quiet 后，Quiet 是强制档位，不会被自动决策切换到 Balance。
+Smart Auto 在电池或 USB-C PD 下以 Quiet 为低负载基线，电量不低于 Balance 安全阈值且应用、CPU 或 GPU 负载持续满足条件时可以临时升到 Balance。手动选择 Quiet 后，Quiet 是强制档位，不会被自动决策切换到 Balance；当运行时确认 280W 级适配器刚接入时，手动 Quiet 锁定会解除并恢复 Auto。已经连接 280W 适配器时再次手动选择 Quiet，仍会保持手动锁定，直到下一次实际适配器接入事件。
 
-Ryzen AI 9 365 的 Quiet DC 曲线会同步应用到第 0/1/2 类处理器：电量不低于 70% 时最大状态 65%、EPP 95；30–69% 时为 60%、EPP 95；低于 30% 时为 50%、EPP 100。长、短线程均优先高效核心。该策略不修改 OEM 异构核心增减阈值、TGP、风扇或 EC。
+Ryzen AI 9 365 的 Quiet DC 曲线会同步应用到第 0/1/2 类处理器：电量不低于 70% 时最大状态 65%、EPP 90；30–69% 时为 60%、EPP 95；低于 30% 时为 50%、EPP 100。长、短线程均优先高效核心。该策略不修改 OEM 异构核心增减阈值、TGP、风扇或 EC。
 
 Quiet 关闭 NVIDIA Overlay 等高耗电辅助进程后，如果检测到它在 10 分钟内自动重启，OpenSynapse 会停止反复结束该进程，进入 30 分钟冷却并显示托盘提示。若希望它持续关闭，应在对应软件中禁用 Overlay 自动启动。
 

@@ -39,7 +39,7 @@ $quietDcMaximum = Resolve-QuietCpuMaxPercent $config $powerSnapshot
 $cases = @(
     [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorMinimum; Hyper = @(5, 5); Balance = @(5, 5); Quiet = @(5, 5) },
     [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorMaximum; Hyper = @(100, 100); Balance = @(100, 100); Quiet = @(80, $quietDcMaximum) },
-    [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorEpp; Hyper = @(0, 0); Balance = @(50, 70); Quiet = @(90, 95) },
+    [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorEpp; Hyper = @(0, 0); Balance = @(50, 70); Quiet = @(90, 90) },
     [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorBoost; Hyper = @(2, 2); Balance = @(3, 3); Quiet = @(0, 0) },
     [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.CoolingPolicy; Hyper = @(1, 1); Balance = @(1, 0); Quiet = @(0, 0) },
     [pscustomobject]@{ Sub = $script:Guids.Wireless; Setting = $script:Guids.WirelessPowerSaving; Hyper = @(0, 0); Balance = @(1, 2); Quiet = @(3, 3) },
@@ -153,7 +153,7 @@ $result = [pscustomobject]@{
 if (-not ($result.TaskState -eq 'Running' -and $result.TaskRunLevel -eq 'Highest' -and $result.TaskActionProtected -and $result.TaskLogonDelay -eq 'PT30S' -and $result.AllowBattery -and
     $result.DontStopOnBattery -and $result.TrayAliveAndMatched -and $result.TrayDpiMode -eq 'PerMonitorV2' -and
     $result.TrayDpiAwareness -eq 2 -and $result.TrayAppUserModelId -eq $script:AppUserModelId -and
-    $result.StateVersion -eq 10 -and $result.ConfigVersion -eq 11 -and $result.RuntimeVersion -eq '2.4.1' -and $result.ActiveProfileAllowed -and
+    $result.StateVersion -eq 10 -and $result.ConfigVersion -eq 11 -and $result.RuntimeVersion -eq '2.4.2' -and $result.ActiveProfileAllowed -and
     $result.InstalledPowerValuesVerified -eq 78 -and $result.EmptyStateArraysValid -and $result.ShortcutExists -and
     $result.IconFilesExist -and $result.IconFilesMatchPackage -and $result.ShortcutUsesOpenSynapseIcon -and $result.ShortcutUsesOpenSynapseIdentity -and
     $result.PostStartApplyFailures -eq 0 -and $result.InstalledMatchesPackage)) {

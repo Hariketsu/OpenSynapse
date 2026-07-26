@@ -53,7 +53,16 @@ $eppTargets = @(
     (Resolve-QuietCpuEppPercent $config $batteryCpuMedium),
     (Resolve-QuietCpuEppPercent $config $batteryLow)
 )
-if (($eppTargets -join ',') -ne '95,95,100') { throw "Adaptive EPP curve is incorrect: $($eppTargets -join ',')" }
+if (($eppTargets -join ',') -ne '90,95,100') { throw "Adaptive EPP curve is incorrect: $($eppTargets -join ',')" }
+$boundaryTargets = @(
+    "$(Resolve-QuietCpuMaxPercent $config ([pscustomobject]@{ BatteryPercent = 70 }))/$(Resolve-QuietCpuEppPercent $config ([pscustomobject]@{ BatteryPercent = 70 }))",
+    "$(Resolve-QuietCpuMaxPercent $config ([pscustomobject]@{ BatteryPercent = 69 }))/$(Resolve-QuietCpuEppPercent $config ([pscustomobject]@{ BatteryPercent = 69 }))",
+    "$(Resolve-QuietCpuMaxPercent $config ([pscustomobject]@{ BatteryPercent = 30 }))/$(Resolve-QuietCpuEppPercent $config ([pscustomobject]@{ BatteryPercent = 30 }))",
+    "$(Resolve-QuietCpuMaxPercent $config ([pscustomobject]@{ BatteryPercent = 29 }))/$(Resolve-QuietCpuEppPercent $config ([pscustomobject]@{ BatteryPercent = 29 }))"
+)
+if (($boundaryTargets -join ',') -ne '65/90,60/95,60/95,50/100') {
+    throw "Adaptive CPU/EPP boundary mapping is incorrect: $($boundaryTargets -join ',')"
+}
 
 $script:RecordedCpuWrites = New-Object Collections.Generic.List[object]
 $script:RecordedReactivations = 0
@@ -92,7 +101,7 @@ foreach ($classSetting in @($script:Guids.ProcessorMaximum, $script:Guids.Proces
 }
 foreach ($classSetting in @($script:Guids.ProcessorEpp, $script:Guids.ProcessorEpp1, $script:Guids.ProcessorEpp2)) {
     $values = @($script:RecordedCpuWrites | Where-Object { $_.Setting -eq $classSetting } | Select-Object -ExpandProperty Value)
-    if (($values -join ',') -ne '95,95,100') { throw "Quiet EPP was not synchronized across processor classes: $($values -join ',')" }
+    if (($values -join ',') -ne '90,95,100') { throw "Quiet EPP was not synchronized across processor classes: $($values -join ',')" }
 }
 foreach ($schedulerSetting in @($script:Guids.ProcessorScheduling, $script:Guids.ProcessorShortScheduling)) {
     $values = @($script:RecordedCpuWrites | Where-Object { $_.Setting -eq $schedulerSetting } | Select-Object -ExpandProperty Value)
@@ -116,7 +125,7 @@ foreach ($required in @(
     '$script:MonitorBaseIntervalMs = 5000',
     '$script:PlanVerificationIntervalSeconds = 30',
     "ProcessorMaximum 80 65",
-    "ProcessorEpp 90 95",
+    "ProcessorEpp 90 90",
     'ProcessorScheduling 4',
     'ProcessorShortScheduling 4',
     "GpuPreference 1 1",
@@ -136,6 +145,7 @@ $result = [pscustomobject]@{
     BrightnessTargets = $targets
     CpuTargets = $cpuTargets
     EppTargets = $eppTargets
+    BoundaryTargets = $boundaryTargets
     CpuBandWrites = $script:RecordedCpuWrites.Count
     PowerAndDisplayEventsSeparated = $true
     ChangedSystemSettings = $false

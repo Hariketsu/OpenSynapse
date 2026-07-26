@@ -25,7 +25,7 @@ $mainScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'OpenSynapse.ps1'
 $cases = @(
     [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorMinimum; Hyper = @(5, 5); Balance = @(5, 5); Quiet = @(5, 5) },
     [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorMaximum; Hyper = @(100, 100); Balance = @(100, 100); Quiet = @(80, 65) },
-    [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorEpp; Hyper = @(0, 0); Balance = @(50, 70); Quiet = @(90, 95) },
+    [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorEpp; Hyper = @(0, 0); Balance = @(50, 70); Quiet = @(90, 90) },
     [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorBoost; Hyper = @(2, 2); Balance = @(3, 3); Quiet = @(0, 0) },
     [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.CoolingPolicy; Hyper = @(1, 1); Balance = @(1, 0); Quiet = @(0, 0) },
     [pscustomobject]@{ Sub = $script:Guids.Wireless; Setting = $script:Guids.WirelessPowerSaving; Hyper = @(0, 0); Balance = @(1, 2); Quiet = @(3, 3) },
@@ -67,8 +67,8 @@ $quietDcOnlyCases = @(
     [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorMinimum2; ExpectedDc = 5 },
     [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorMaximum1; ExpectedDc = 65 },
     [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorMaximum2; ExpectedDc = 65 },
-    [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorEpp1; ExpectedDc = 95 },
-    [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorEpp2; ExpectedDc = 95 },
+    [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorEpp1; ExpectedDc = 90 },
+    [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorEpp2; ExpectedDc = 90 },
     [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorAutonomous; ExpectedDc = 1 },
     [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorScheduling; ExpectedDc = 4 },
     [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorShortScheduling; ExpectedDc = 4 }
@@ -141,7 +141,7 @@ try {
     foreach ($dynamicCase in @(
         [pscustomobject]@{ BatteryPercent = 50; Expected = 60; Epp = 95 },
         [pscustomobject]@{ BatteryPercent = 15; Expected = 50; Epp = 100 },
-        [pscustomobject]@{ BatteryPercent = 80; Expected = 65; Epp = 95 }
+        [pscustomobject]@{ BatteryPercent = 80; Expected = 65; Epp = 90 }
     )) {
         $snapshot = [pscustomobject]@{ Source = 'Battery'; BatteryPercent = $dynamicCase.BatteryPercent }
         $actualTarget = Apply-QuietDynamicCpuPolicy $dynamicConfig $dynamicState $snapshot

@@ -16,7 +16,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $script:AppName = 'OpenSynapse'
-$script:AppVersion = '2.4.1'
+$script:AppVersion = '2.4.2'
 $script:AppUserModelId = 'OpenSynapse.Desktop'
 $script:TaskName = 'OpenSynapse'
 $script:LegacyAgentTaskName = 'OpenSynapse Agent'
@@ -353,9 +353,9 @@ function Set-ProfilePolicy {
         Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.ProcessorMaximum 80 65
         Set-PlanValue $PlanGuid DC $script:Guids.Processor $script:Guids.ProcessorMaximum1 65 -Optional
         Set-PlanValue $PlanGuid DC $script:Guids.Processor $script:Guids.ProcessorMaximum2 65 -Optional
-        Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.ProcessorEpp 90 95 -Optional
-        Set-PlanValue $PlanGuid DC $script:Guids.Processor $script:Guids.ProcessorEpp1 95 -Optional
-        Set-PlanValue $PlanGuid DC $script:Guids.Processor $script:Guids.ProcessorEpp2 95 -Optional
+        Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.ProcessorEpp 90 90 -Optional
+        Set-PlanValue $PlanGuid DC $script:Guids.Processor $script:Guids.ProcessorEpp1 90 -Optional
+        Set-PlanValue $PlanGuid DC $script:Guids.Processor $script:Guids.ProcessorEpp2 90 -Optional
         Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.ProcessorBoost 0 0 -Optional
         Set-PlanValue $PlanGuid DC $script:Guids.Processor $script:Guids.ProcessorAutonomous 1 -Optional
         Set-PlanValue $PlanGuid DC $script:Guids.Processor $script:Guids.ProcessorScheduling 4 -Optional
@@ -1131,6 +1131,20 @@ function Get-DesiredProfile {
     return 'Quiet'
 }
 
+function Resolve-SelectionAfterSupplyTransition {
+    param(
+        [ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet')][string]$Selection,
+        [AllowEmptyString()][string]$PreviousSupplyType,
+        [AllowEmptyString()][string]$CurrentSupplyType
+    )
+    $highPowerWasJustConnected =
+        -not [string]::IsNullOrWhiteSpace($PreviousSupplyType) -and
+        -not [string]::Equals($PreviousSupplyType, 'HighPowerAC', [StringComparison]::OrdinalIgnoreCase) -and
+        [string]::Equals($CurrentSupplyType, 'HighPowerAC', [StringComparison]::OrdinalIgnoreCase)
+    if ($Selection -eq 'Quiet' -and $highPowerWasJustConnected) { return 'Auto' }
+    return $Selection
+}
+
 function New-SmartAutomationState {
     param([string]$InitialProfile = '')
     if ($InitialProfile -notin @('Hyper', 'Balance', 'Quiet')) { $InitialProfile = '' }
@@ -1607,13 +1621,14 @@ function Resolve-QuietCpuMaxPercent {
 
 function Resolve-QuietCpuEppPercent {
     param([object]$Config, [AllowNull()][object]$Snapshot)
-    if (-not [bool]$Config.AdaptiveQuietCpu) { return 95 }
+    if (-not [bool]$Config.AdaptiveQuietCpu) { return 90 }
 
     $batteryPercent = if ($null -ne $Snapshot -and [int]$Snapshot.BatteryPercent -ge 0) {
         [int]$Snapshot.BatteryPercent
     } else { 100 }
     if ($batteryPercent -lt [int]$Config.QuietCpuLowThreshold) { return 100 }
-    return 95
+    if ($batteryPercent -lt [int]$Config.QuietCpuMediumThreshold) { return 95 }
+    return 90
 }
 
 function Apply-QuietDynamicCpuPolicy {
@@ -2872,6 +2887,8 @@ function Test-OpenSynapse {
         (Resolve-QuietCpuMaxPercent $defaults ([pscustomobject]@{ BatteryPercent = 80 })) -ne 65 -or
         (Resolve-QuietCpuMaxPercent $defaults ([pscustomobject]@{ BatteryPercent = 50 })) -ne 60 -or
         (Resolve-QuietCpuMaxPercent $defaults ([pscustomobject]@{ BatteryPercent = 15 })) -ne 50 -or
+        (Resolve-QuietCpuEppPercent $defaults ([pscustomobject]@{ BatteryPercent = 80 })) -ne 90 -or
+        (Resolve-QuietCpuEppPercent $defaults ([pscustomobject]@{ BatteryPercent = 50 })) -ne 95 -or
         (Resolve-QuietCpuEppPercent $defaults ([pscustomobject]@{ BatteryPercent = 15 })) -ne 100) {
         throw 'Quiet adaptive CPU mapping failed.'
     }
@@ -3670,7 +3687,7 @@ function Start-TrayApplication {
     $quietPolicyLabel.ForeColor = $script:TextMuted
     $optionsGroup.Controls.Add($quietPolicyLabel)
     $quietPolicyValue = New-Object Windows.Forms.Label
-    $quietPolicyValue.Text = 'Dynamic 75 / 65 / 60%; EPP 95; Boost off'
+    $quietPolicyValue.Text = 'Dynamic 65 / 60 / 50%; EPP 90 / 95 / 100; Boost off'
     $quietPolicyValue.Location = New-Object Drawing.Point(175, 146)
     $quietPolicyValue.Size = New-Object Drawing.Size(375, 30)
     $quietPolicyValue.ForeColor = $script:TextLight
@@ -4597,6 +4614,18 @@ function Start-TrayApplication {
         $null = Register-PowerEventObservation ([OpenSynapseNative.PowerChangeSignal]::EventCount)
         $null = Invoke-PendingPowerProbe
         $snapshot = Get-PowerSnapshot -UseCachedAdapter
+        $selectionTransition = @{
+            Selection = [string]$script:Config.Selection
+            PreviousSupplyType = [string]$script:LastSupplyType
+            CurrentSupplyType = [string]$snapshot.SupplyType
+        }
+        $selectionAfterSupplyTransition = Resolve-SelectionAfterSupplyTransition @selectionTransition
+        if ($selectionAfterSupplyTransition -ne [string]$script:Config.Selection) {
+            $script:Config.Selection = $selectionAfterSupplyTransition
+            $script:TemporaryOverride = $null
+            Save-AppConfig $script:Config
+            Write-AppLog 'Verified 280W-class adapter connection released the manual Quiet lock and restored Smart Auto.'
+        }
         $leakWasDetected = [bool]$script:AutomationState.DgpuLeakDetected
         try {
             if ([string]$script:Config.Selection -eq 'Auto' -and [bool]$script:Config.SmartAutomationEnabled) {

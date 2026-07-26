@@ -39,6 +39,16 @@ if ($autoDecision.Profile -ne 'Balance') { throw 'Auto did not promote a sustain
 if ((Get-DesiredProfile Quiet $portable $config $autoState) -ne 'Quiet') {
     throw 'Manual Quiet did not override the automatic Balance decision.'
 }
+if ((Resolve-SelectionAfterSupplyTransition Quiet Battery Battery) -ne 'Quiet' -or
+    (Resolve-SelectionAfterSupplyTransition Quiet Battery LowPowerPD) -ne 'Quiet' -or
+    (Resolve-SelectionAfterSupplyTransition Quiet HighPowerAC HighPowerAC) -ne 'Quiet') {
+    throw 'Manual Quiet was released without a newly connected verified 280W-class adapter.'
+}
+if ((Resolve-SelectionAfterSupplyTransition Quiet Battery HighPowerAC) -ne 'Auto' -or
+    (Resolve-SelectionAfterSupplyTransition Quiet LowPowerPD HighPowerAC) -ne 'Auto' -or
+    (Resolve-SelectionAfterSupplyTransition Auto Battery HighPowerAC) -ne 'Auto') {
+    throw 'A verified 280W-class adapter connection did not restore Auto from manual Quiet.'
+}
 
 $script:RecordedQuietLogs = New-Object Collections.Generic.List[string]
 function Write-AppLog {
@@ -145,6 +155,7 @@ $result = [pscustomobject]@{
     Result = 'PASS'
     AutoPortableBalance = $true
     ManualQuietLocked = $true
+    HighPowerConnectionRestoresAuto = $true
     ManualDecisionLoggingPaused = $true
     RestartCooldownMinutes = [int]($config.QuietProcessCooldownSeconds / 60)
     TelemetrySchemaVersion = $script:TelemetrySchemaVersion

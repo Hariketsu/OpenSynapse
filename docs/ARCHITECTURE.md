@@ -2,7 +2,7 @@
 
 ## Release runtime
 
-OpenSynapse 2.4.1 uses the PowerPilot 2.4.1 execution model because that model has already passed the target-machine installation, power-policy, display, DPI and stability test suite.
+OpenSynapse 2.4.2 uses the PowerPilot 2.4.1 execution model because that model has already passed the target-machine installation, power-policy, display, DPI and stability test suite.
 
 ```mermaid
 flowchart TD
