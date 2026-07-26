@@ -39,7 +39,7 @@ try {
     $v1Config = [pscustomobject]@{ Selection = 'Auto'; CloseHighDrainAppsInQuiet = $true; QuietProcessNames = @('HWiNFO64') }
     Write-JsonFile $script:ConfigPath $v1Config
     $migratedConfig = Get-AppConfig
-    if ($migratedConfig.Version -ne 10 -or $migratedConfig.InternalScale -ne 150 -or $migratedConfig.ExternalScale -ne 125) { throw 'v1 config migration failed.' }
+    if ($migratedConfig.Version -ne 11 -or $migratedConfig.InternalScale -ne 150 -or $migratedConfig.ExternalScale -ne 125) { throw 'v1 config migration failed.' }
     if (-not $migratedConfig.ManageWakeDevices -or -not $migratedConfig.ManageRefreshRate) { throw 'v2 config defaults were not added.' }
     if ('ArmourySocketServer' -notin @($migratedConfig.QuietProcessNames)) { throw 'The v2 process list was not merged into the legacy config.' }
     if ($migratedConfig.RefreshPolicy -ne 'FollowProfile' -or $migratedConfig.BalanceBrightness -ne 60 -or $migratedConfig.BalanceBatteryThreshold -ne 50) {
@@ -49,8 +49,8 @@ try {
     if (-not $migratedConfig.AdaptiveQuietBrightness -or $migratedConfig.ProcessMaintenanceSeconds -ne 180) {
         throw 'v5 Quiet endurance defaults were not added.'
     }
-    if (-not $migratedConfig.AdaptiveQuietCpu -or $migratedConfig.QuietCpuMaxHighBattery -ne 75 -or
-        $migratedConfig.QuietCpuMaxMediumBattery -ne 65 -or $migratedConfig.QuietCpuMaxLowBattery -ne 60) {
+    if (-not $migratedConfig.AdaptiveQuietCpu -or $migratedConfig.QuietCpuMaxHighBattery -ne 65 -or
+        $migratedConfig.QuietCpuMaxMediumBattery -ne 60 -or $migratedConfig.QuietCpuMaxLowBattery -ne 50) {
         throw 'v6 adaptive Quiet CPU defaults were not added.'
     }
     if ($migratedConfig.HyperCpuPolicy -ne 'Sustained') { throw 'v7 Hyper CPU policy default was not added.' }
@@ -98,7 +98,7 @@ try {
     }
     Write-JsonFile $script:ConfigPath $legacyDotNetConfig
     $dotNetMigratedConfig = Get-AppConfig
-    if (-not $script:LegacyDotNetConfigDetected -or $dotNetMigratedConfig.Version -ne 10 -or
+    if (-not $script:LegacyDotNetConfigDetected -or $dotNetMigratedConfig.Version -ne 11 -or
         $dotNetMigratedConfig.Selection -ne 'Hyper' -or $dotNetMigratedConfig.BalanceBatteryThreshold -ne 57 -or
         $dotNetMigratedConfig.ManageAdvancedColor -or $dotNetMigratedConfig.ManageBrightness -or
         $dotNetMigratedConfig.DisplayScalingEnabled -or $dotNetMigratedConfig.RefreshPolicy -ne 'Fixed120' -or
@@ -118,9 +118,25 @@ try {
 
     Write-JsonFile $script:ConfigPath @('PowerPilot uninstaller output', $migratedConfig)
     $interruptedTakeoverConfig = Get-AppConfig
-    if ($interruptedTakeoverConfig.Version -ne 10 -or $interruptedTakeoverConfig.Selection -ne 'Auto' -or
+    if ($interruptedTakeoverConfig.Version -ne 11 -or $interruptedTakeoverConfig.Selection -ne 'Auto' -or
         @($interruptedTakeoverConfig.ApplicationRules).Count -lt 15) {
         throw 'Interrupted PowerPilot takeover configuration recovery failed.'
+    }
+
+    $v10QuietConfig = Get-DefaultConfig
+    $v10QuietConfig.Version = 10
+    $v10QuietConfig.QuietCpuMaxHighBattery = 75
+    $v10QuietConfig.QuietCpuMaxMediumBattery = 65
+    $v10QuietConfig.QuietCpuMaxLowBattery = 60
+    $v10QuietConfig.QuietCpuMediumThreshold = 50
+    $v10QuietConfig.QuietCpuLowThreshold = 20
+    Write-JsonFile $script:ConfigPath $v10QuietConfig
+    $v11QuietConfig = Get-AppConfig
+    if ($v11QuietConfig.Version -ne 11 -or $v11QuietConfig.QuietCpuMaxHighBattery -ne 65 -or
+        $v11QuietConfig.QuietCpuMaxMediumBattery -ne 60 -or $v11QuietConfig.QuietCpuMaxLowBattery -ne 50 -or
+        $v11QuietConfig.QuietCpuMediumThreshold -ne 70 -or $v11QuietConfig.QuietCpuLowThreshold -ne 30 -or
+        $v11QuietConfig.QuietProcessRestartWindowSeconds -ne 600 -or $v11QuietConfig.QuietProcessCooldownSeconds -ne 1800) {
+        throw 'v11 Ryzen AI 9 365 Quiet curve or restart cooling defaults were not migrated.'
     }
 
     Write-JsonFile ($script:ConfigPath + '.bak') $legacyDotNetConfig

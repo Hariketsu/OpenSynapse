@@ -39,6 +39,7 @@ $script:RuntimePath = Join-Path $script:DataDir 'runtime.json'
 $script:ShowRequestPath = Join-Path $script:DataDir 'show.request'
 $script:LogPath = Join-Path $script:DataDir 'OpenSynapse.log'
 $script:TelemetryPath = Join-Path $script:DataDir 'telemetry.jsonl'
+$script:TelemetrySchemaVersion = 2
 $script:ShortcutPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\OpenSynapse.lnk'
 $script:LegacyDotNetConfigDetected = $false
 $script:RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
@@ -74,6 +75,7 @@ $script:PendingPowerProbeAt = [DateTime]::MaxValue
 $script:PowerEventsObserved = 0
 $script:PowerEventsCoalesced = 0
 $script:PowerEventTriggeredProbes = 0
+$script:QuietProcessGuard = @{}
 
 $script:Guids = @{
     Balanced             = '381b4222-f694-41f0-9685-ff5bb260df2e'
@@ -92,6 +94,8 @@ $script:Guids = @{
     ProcessorAutonomous  = '8baa4a8a-14c6-4451-8e8b-14bdbd197537'
     ProcessorIncrease    = '465e1f50-b610-473a-ab58-00d1077dc418'
     ProcessorIncrease1   = '465e1f50-b610-473a-ab58-00d1077dc419'
+    ProcessorScheduling  = '93b8b6dc-0698-4d1c-9ee4-0644e900c85d'
+    ProcessorShortScheduling = 'bae08b81-2d5e-4688-ad6a-13243356654b'
     CoolingPolicy        = '94d3a615-a899-4ac5-ae2b-e4d8f634367f'
     Wireless             = '19cbb8fa-5279-450e-9fac-8a3d5fedd0c1'
     WirelessPowerSaving  = '12bbebe6-58d6-4636-95bb-3217ef867c1a'
@@ -344,9 +348,18 @@ function Set-ProfilePolicy {
     }
     else {
         Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.ProcessorMinimum 5 5
-        Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.ProcessorMaximum 80 75
+        Set-PlanValue $PlanGuid DC $script:Guids.Processor $script:Guids.ProcessorMinimum1 5 -Optional
+        Set-PlanValue $PlanGuid DC $script:Guids.Processor $script:Guids.ProcessorMinimum2 5 -Optional
+        Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.ProcessorMaximum 80 65
+        Set-PlanValue $PlanGuid DC $script:Guids.Processor $script:Guids.ProcessorMaximum1 65 -Optional
+        Set-PlanValue $PlanGuid DC $script:Guids.Processor $script:Guids.ProcessorMaximum2 65 -Optional
         Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.ProcessorEpp 90 95 -Optional
+        Set-PlanValue $PlanGuid DC $script:Guids.Processor $script:Guids.ProcessorEpp1 95 -Optional
+        Set-PlanValue $PlanGuid DC $script:Guids.Processor $script:Guids.ProcessorEpp2 95 -Optional
         Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.ProcessorBoost 0 0 -Optional
+        Set-PlanValue $PlanGuid DC $script:Guids.Processor $script:Guids.ProcessorAutonomous 1 -Optional
+        Set-PlanValue $PlanGuid DC $script:Guids.Processor $script:Guids.ProcessorScheduling 4 -Optional
+        Set-PlanValue $PlanGuid DC $script:Guids.Processor $script:Guids.ProcessorShortScheduling 4 -Optional
         Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.CoolingPolicy 0 0 -Optional
         Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.ProcessorMinCores 10 0 -Optional
         Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.ProcessorMinCores1 10 0 -Optional
@@ -374,7 +387,7 @@ function Get-DefaultConfig {
         }
     )
     return [pscustomobject][ordered]@{
-        Version = 10
+        Version = 11
         Selection = 'Auto'
         SmartAutomationEnabled = $true
         SmartHighPowerCpuEnter = 45
@@ -405,12 +418,14 @@ function Get-DefaultConfig {
         ManageAsusServices = $true
         QuietServiceNames = @($script:DefaultQuietServices)
         ProcessMaintenanceSeconds = 180
+        QuietProcessRestartWindowSeconds = 600
+        QuietProcessCooldownSeconds = 1800
         AdaptiveQuietCpu = $true
-        QuietCpuMaxHighBattery = 75
-        QuietCpuMaxMediumBattery = 65
-        QuietCpuMaxLowBattery = 60
-        QuietCpuMediumThreshold = 50
-        QuietCpuLowThreshold = 20
+        QuietCpuMaxHighBattery = 65
+        QuietCpuMaxMediumBattery = 60
+        QuietCpuMaxLowBattery = 50
+        QuietCpuMediumThreshold = 70
+        QuietCpuLowThreshold = 30
         ManageWakeDevices = $true
         QuietWakeDevicePatterns = @($script:DefaultWakePatterns)
         DisplayScalingEnabled = $true
@@ -501,6 +516,8 @@ function Convert-LegacyDotNetConfig {
         'AdaptiveQuietBrightness' = 'AdaptiveQuietBrightness'
         'SeamlessModeSwitching' = 'SeamlessModeSwitching'
         'ProcessMaintenanceSeconds' = 'ProcessMaintenanceSeconds'
+        'QuietProcessRestartWindowSeconds' = 'QuietProcessRestartWindowSeconds'
+        'QuietProcessCooldownSeconds' = 'QuietProcessCooldownSeconds'
     }
     foreach ($sourceName in $directMappings.Keys) {
         $sourceProperty = Get-ObjectProperty $Config $sourceName
@@ -613,6 +630,31 @@ function Get-AppConfig {
     if ($oldVersion -lt 5 -and [int]$config.ProcessMaintenanceSeconds -eq 30) {
         $config.ProcessMaintenanceSeconds = 180
     }
+    if ($oldVersion -lt 11 -and
+        [int]$config.QuietCpuMaxHighBattery -eq 75 -and
+        [int]$config.QuietCpuMaxMediumBattery -eq 65 -and
+        [int]$config.QuietCpuMaxLowBattery -eq 60 -and
+        [int]$config.QuietCpuMediumThreshold -eq 50 -and
+        [int]$config.QuietCpuLowThreshold -eq 20) {
+        $config.QuietCpuMaxHighBattery = 65
+        $config.QuietCpuMaxMediumBattery = 60
+        $config.QuietCpuMaxLowBattery = 50
+        $config.QuietCpuMediumThreshold = 70
+        $config.QuietCpuLowThreshold = 30
+        Write-AppLog 'Migrated the default Quiet battery curve to the Ryzen AI 9 365 endurance profile.'
+    }
+    $config.ProcessMaintenanceSeconds = [Math]::Max(60, [Math]::Min(3600, [int]$config.ProcessMaintenanceSeconds))
+    $config.QuietProcessRestartWindowSeconds = [Math]::Max(60, [Math]::Min(3600, [int]$config.QuietProcessRestartWindowSeconds))
+    $config.QuietProcessCooldownSeconds = [Math]::Max(
+        [int]$config.QuietProcessRestartWindowSeconds,
+        [Math]::Min(21600, [int]$config.QuietProcessCooldownSeconds))
+    $config.QuietCpuMaxHighBattery = [Math]::Max(25, [Math]::Min(100, [int]$config.QuietCpuMaxHighBattery))
+    $config.QuietCpuMaxMediumBattery = [Math]::Max(25, [Math]::Min([int]$config.QuietCpuMaxHighBattery, [int]$config.QuietCpuMaxMediumBattery))
+    $config.QuietCpuMaxLowBattery = [Math]::Max(25, [Math]::Min([int]$config.QuietCpuMaxMediumBattery, [int]$config.QuietCpuMaxLowBattery))
+    $config.QuietCpuLowThreshold = [Math]::Max(5, [Math]::Min(90, [int]$config.QuietCpuLowThreshold))
+    $config.QuietCpuMediumThreshold = [Math]::Max(
+        ([int]$config.QuietCpuLowThreshold + 1),
+        [Math]::Min(95, [int]$config.QuietCpuMediumThreshold))
     $config.SmartHighPowerCpuEnter = [Math]::Max(10, [Math]::Min(100, [int]$config.SmartHighPowerCpuEnter))
     $config.SmartHighPowerCpuExit = [Math]::Max(0, [Math]::Min(($config.SmartHighPowerCpuEnter - 1), [int]$config.SmartHighPowerCpuExit))
     $config.SmartPortableCpuEnter = [Math]::Max(10, [Math]::Min(100, [int]$config.SmartPortableCpuEnter))
@@ -661,7 +703,7 @@ function Get-AppConfig {
         })
     }
     $config.ApplicationRules = $normalizedRules.ToArray()
-    $config.Version = 10
+    $config.Version = 11
     return $config
 }
 
@@ -1400,30 +1442,14 @@ function Resolve-SmartAutomationDecision {
     }
 }
 
-function Update-SmartAutomationState {
+function Update-DgpuActivityState {
     param(
         [object]$Config,
         [object]$Snapshot,
         [object]$AutomationState,
-        [AllowNull()][object]$Telemetry = $null,
-        [DateTime]$Now = (Get-Date)
+        [object]$Telemetry
     )
-    if ($null -eq $Telemetry) { $Telemetry = Get-SmartAutomationTelemetry $Config }
     $previousLeakDetected = [bool]$AutomationState.DgpuLeakDetected
-    $sessionLocked = $null -ne $Telemetry.PSObject.Properties['SessionLocked'] -and [bool]$Telemetry.SessionLocked
-    $decision = Resolve-SmartAutomationDecision $Config $Snapshot $AutomationState ([double]$Telemetry.CpuPercent) ([string]$Telemetry.ForegroundProcess) $Now ([double]$Telemetry.GpuPercent) ([bool]$Telemetry.ForegroundFullscreen) @($Telemetry.RunningProcesses) $sessionLocked
-    $previous = [string]$AutomationState.CurrentProfile
-    $AutomationState.CurrentProfile = [string]$decision.Profile
-    $AutomationState.CandidateProfile = [string]$decision.CandidateProfile
-    $AutomationState.CandidateSamples = [int]$decision.CandidateSamples
-    $AutomationState.LastSupplyType = [string]$decision.SupplyType
-    $AutomationState.LastReason = [string]$decision.Reason
-    $AutomationState.LastCpuPercent = [double]$decision.CpuPercent
-    $AutomationState.LastGpuPercent = [double]$decision.GpuPercent
-    $AutomationState.ForegroundProcess = [string]$decision.ForegroundProcess
-    $AutomationState.ForegroundFullscreen = [bool]$decision.EffectiveFullscreen
-    $AutomationState.SessionLocked = [bool]$decision.SessionLocked
-    $AutomationState.MatchedRule = [string]$decision.MatchedRule
     $leakSignal = [string]$Snapshot.SupplyType -in @('Battery', 'LowPowerPD') -and [bool]$Telemetry.GpuAvailable -and
         ([double]$Telemetry.DgpuPercent -ge [double]$Config.DgpuLeakUtilizationPercent -or [double]$Telemetry.DgpuDedicatedMb -ge [double]$Config.DgpuLeakMemoryMb)
     if ($leakSignal) { $AutomationState.DgpuLeakSamples = [int]$AutomationState.DgpuLeakSamples + 1 }
@@ -1453,6 +1479,61 @@ function Update-SmartAutomationState {
     elseif ($previousLeakDetected -and -not [bool]$AutomationState.DgpuLeakDetected) {
         Write-AppLog 'Suspected dGPU activity signal cleared.'
     }
+}
+
+function Update-ManualTelemetryState {
+    param(
+        [object]$Config,
+        [object]$Snapshot,
+        [object]$AutomationState,
+        [ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet')][string]$Selection,
+        [AllowNull()][object]$Telemetry = $null
+    )
+    if ($null -eq $Telemetry) { $Telemetry = Get-SmartAutomationTelemetry $Config }
+    $sessionLocked = $null -ne $Telemetry.PSObject.Properties['SessionLocked'] -and [bool]$Telemetry.SessionLocked
+    if ($Selection -in @('Hyper', 'Balance', 'Quiet')) { $AutomationState.CurrentProfile = $Selection }
+    $AutomationState.CandidateProfile = ''
+    $AutomationState.CandidateSamples = 0
+    $AutomationState.LastSupplyType = [string]$Snapshot.SupplyType
+    $AutomationState.LastReason = if ($Selection -eq 'Auto') {
+        'Smart Auto switching disabled; telemetry only'
+    } else {
+        "manual $Selection selected; Smart Auto decisions paused"
+    }
+    $AutomationState.LastCpuPercent = [double]$Telemetry.CpuPercent
+    $AutomationState.LastGpuPercent = [double]$Telemetry.GpuPercent
+    $AutomationState.ForegroundProcess = [string]$Telemetry.ForegroundProcess
+    $AutomationState.ForegroundFullscreen = [bool]$Telemetry.ForegroundFullscreen
+    $AutomationState.SessionLocked = $sessionLocked
+    $AutomationState.MatchedRule = ''
+    Update-DgpuActivityState $Config $Snapshot $AutomationState $Telemetry
+    return $Telemetry
+}
+
+function Update-SmartAutomationState {
+    param(
+        [object]$Config,
+        [object]$Snapshot,
+        [object]$AutomationState,
+        [AllowNull()][object]$Telemetry = $null,
+        [DateTime]$Now = (Get-Date)
+    )
+    if ($null -eq $Telemetry) { $Telemetry = Get-SmartAutomationTelemetry $Config }
+    $sessionLocked = $null -ne $Telemetry.PSObject.Properties['SessionLocked'] -and [bool]$Telemetry.SessionLocked
+    $decision = Resolve-SmartAutomationDecision $Config $Snapshot $AutomationState ([double]$Telemetry.CpuPercent) ([string]$Telemetry.ForegroundProcess) $Now ([double]$Telemetry.GpuPercent) ([bool]$Telemetry.ForegroundFullscreen) @($Telemetry.RunningProcesses) $sessionLocked
+    $previous = [string]$AutomationState.CurrentProfile
+    $AutomationState.CurrentProfile = [string]$decision.Profile
+    $AutomationState.CandidateProfile = [string]$decision.CandidateProfile
+    $AutomationState.CandidateSamples = [int]$decision.CandidateSamples
+    $AutomationState.LastSupplyType = [string]$decision.SupplyType
+    $AutomationState.LastReason = [string]$decision.Reason
+    $AutomationState.LastCpuPercent = [double]$decision.CpuPercent
+    $AutomationState.LastGpuPercent = [double]$decision.GpuPercent
+    $AutomationState.ForegroundProcess = [string]$decision.ForegroundProcess
+    $AutomationState.ForegroundFullscreen = [bool]$decision.EffectiveFullscreen
+    $AutomationState.SessionLocked = [bool]$decision.SessionLocked
+    $AutomationState.MatchedRule = [string]$decision.MatchedRule
+    Update-DgpuActivityState $Config $Snapshot $AutomationState $Telemetry
     if ([bool]$decision.Transitioned -or [string]::IsNullOrWhiteSpace($previous)) {
         $AutomationState.LastTransitionAt = $Now
         Write-AppLog "Smart Auto decision: $previous -> $($decision.Profile); reason=$($decision.Reason); supply=$($decision.SupplyType); CPU=$($decision.CpuPercent)%; GPU=$($decision.GpuPercent)%; foreground=$($decision.ForegroundProcess); fullscreen=$($decision.ForegroundFullscreen)."
@@ -1524,18 +1605,46 @@ function Resolve-QuietCpuMaxPercent {
     return [int]$Config.QuietCpuMaxHighBattery
 }
 
+function Resolve-QuietCpuEppPercent {
+    param([object]$Config, [AllowNull()][object]$Snapshot)
+    if (-not [bool]$Config.AdaptiveQuietCpu) { return 95 }
+
+    $batteryPercent = if ($null -ne $Snapshot -and [int]$Snapshot.BatteryPercent -ge 0) {
+        [int]$Snapshot.BatteryPercent
+    } else { 100 }
+    if ($batteryPercent -lt [int]$Config.QuietCpuLowThreshold) { return 100 }
+    return 95
+}
+
 function Apply-QuietDynamicCpuPolicy {
     param([object]$Config, [object]$State, [AllowNull()][object]$Snapshot)
     $target = Resolve-QuietCpuMaxPercent $Config $Snapshot
-    if ($script:LastAppliedQuietCpuMax -eq $target) { return $target }
-
     $quietGuid = [string]$State.QuietPlanGuid
-    Set-PlanValue $quietGuid DC $script:Guids.Processor $script:Guids.ProcessorMaximum $target
+    $epp = Resolve-QuietCpuEppPercent $Config $Snapshot
+    $signature = "$quietGuid|$target|$epp|4"
+    if ([string]$script:LastAppliedQuietCpuMax -eq $signature) { return $target }
+
+    foreach ($setting in @(
+        $script:Guids.ProcessorMaximum,
+        $script:Guids.ProcessorMaximum1,
+        $script:Guids.ProcessorMaximum2
+    )) {
+        Set-PlanValue $quietGuid DC $script:Guids.Processor $setting $target -Optional:($setting -ne $script:Guids.ProcessorMaximum)
+    }
+    foreach ($setting in @(
+        $script:Guids.ProcessorEpp,
+        $script:Guids.ProcessorEpp1,
+        $script:Guids.ProcessorEpp2
+    )) {
+        Set-PlanValue $quietGuid DC $script:Guids.Processor $setting $epp -Optional
+    }
+    Set-PlanValue $quietGuid DC $script:Guids.Processor $script:Guids.ProcessorScheduling 4 -Optional
+    Set-PlanValue $quietGuid DC $script:Guids.Processor $script:Guids.ProcessorShortScheduling 4 -Optional
     if ([string]::Equals((Get-ActivePlanGuid), $quietGuid, [StringComparison]::OrdinalIgnoreCase)) {
         Invoke-PowerCfg @('/setactive', $quietGuid) | Out-Null
     }
-    $script:LastAppliedQuietCpuMax = $target
-    Write-AppLog "Quiet adaptive CPU maximum set to $target% for battery=$($Snapshot.BatteryPercent)%."
+    $script:LastAppliedQuietCpuMax = $signature
+    Write-AppLog "Quiet DC CPU policy set across all efficiency classes: maximum=$target%, EPP=$epp, scheduler=prefer-efficient, battery=$($Snapshot.BatteryPercent)%."
     return $target
 }
 
@@ -1551,19 +1660,60 @@ function Get-InstalledState {
 }
 
 function Stop-TrackedProcess {
-    param([string[]]$Names)
+    param(
+        [string[]]$Names,
+        [AllowNull()][object]$Config = $null,
+        [DateTime]$Now = (Get-Date)
+    )
     $closed = New-Object Collections.Generic.List[string]
+    $restarted = New-Object Collections.Generic.List[string]
+    $cooling = New-Object Collections.Generic.List[string]
+    $restartWindowSeconds = if ($null -ne $Config) { [int]$Config.QuietProcessRestartWindowSeconds } else { 600 }
+    $cooldownSeconds = if ($null -ne $Config) { [int]$Config.QuietProcessCooldownSeconds } else { 1800 }
     foreach ($name in $Names) {
-        foreach ($process in @(Get-Process -Name ([string]$name) -ErrorAction SilentlyContinue)) {
+        $processName = [string]$name
+        if ([string]::IsNullOrWhiteSpace($processName)) { continue }
+        $guard = if ($script:QuietProcessGuard.ContainsKey($processName)) {
+            $script:QuietProcessGuard[$processName]
+        } else { $null }
+        if ($null -ne $guard -and [DateTime]$guard.CooldownUntil -gt $Now) {
+            continue
+        }
+        $runningProcesses = @(Get-Process -Name $processName -ErrorAction SilentlyContinue)
+        if ($runningProcesses.Count -eq 0) { continue }
+        if ($null -ne $guard -and [DateTime]$guard.LastStoppedAt -ne [DateTime]::MinValue -and
+            ($Now - [DateTime]$guard.LastStoppedAt).TotalSeconds -le $restartWindowSeconds) {
+            $guard.RestartCount = [int]$guard.RestartCount + 1
+            $guard.CooldownUntil = $Now.AddSeconds($cooldownSeconds)
+            $script:QuietProcessGuard[$processName] = $guard
+            $restarted.Add($processName)
+            $cooling.Add($processName)
+            Write-AppLog "Quiet restart detected for $processName; process enforcement cooling down until $($guard.CooldownUntil.ToString('s')) to avoid a restart/termination loop."
+            continue
+        }
+        $processClosed = $false
+        foreach ($process in $runningProcesses) {
             try {
                 Stop-Process -Id $process.Id -Force -ErrorAction Stop
+                $processClosed = $true
                 if (-not $closed.Contains($process.ProcessName)) { $closed.Add($process.ProcessName) }
             }
             catch { Write-AppLog "Cannot stop process $($process.ProcessName): $($_.Exception.Message)" }
         }
+        if ($processClosed) {
+            $script:QuietProcessGuard[$processName] = [pscustomobject]@{
+                LastStoppedAt = $Now
+                CooldownUntil = [DateTime]::MinValue
+                RestartCount = if ($null -eq $guard) { 0 } else { [int]$guard.RestartCount }
+            }
+        }
     }
     if ($closed.Count -gt 0) { Write-AppLog "Quiet closed processes: $($closed -join ', ')" }
-    return @($closed)
+    return [pscustomobject]@{
+        Closed = [string[]]@($closed)
+        Restarted = [string[]]@($restarted)
+        CoolingDown = [string[]]@($cooling)
+    }
 }
 
 function Stop-QuietServices {
@@ -1884,7 +2034,8 @@ function Write-TelemetryRecord {
         [object]$AutomationState,
         [string]$DesiredProfile,
         [string]$Selection,
-        [string]$TemporaryProfile = ''
+        [string]$TemporaryProfile = '',
+        [string]$ActiveProfile = ''
     )
     try {
         if (-not (Test-Path -LiteralPath $script:DataDir)) { [IO.Directory]::CreateDirectory($script:DataDir) | Out-Null }
@@ -1892,18 +2043,23 @@ function Write-TelemetryRecord {
             Move-Item -LiteralPath $script:TelemetryPath -Destination ($script:TelemetryPath + '.old') -Force
         }
         $record = [pscustomobject][ordered]@{
+            SchemaVersion = $script:TelemetrySchemaVersion
             Timestamp = (Get-Date).ToUniversalTime().ToString('o')
             Source = [string]$Snapshot.Source
             SupplyType = [string]$Snapshot.SupplyType
             BatteryPercent = [int]$Snapshot.BatteryPercent
+            BatteryRemainingMwh = $Snapshot.BatteryRemainingMwh
+            BatteryVoltageMv = $Snapshot.BatteryVoltageMv
             BatteryDischargeW = $Snapshot.BatteryDischargeW
             BatteryDischargeEmaW = $Snapshot.BatteryDischargeEmaW
             BatteryDischargeAverage10mW = $Snapshot.BatteryDischargeAverage10mW
+            EstimatedHours = $Snapshot.BatteryEstimatedHours
             BatteryEstimateConfidence = [string]$Snapshot.BatteryEstimateConfidence
             BatteryChargeW = $Snapshot.BatteryChargeW
             Selection = $Selection
             TemporaryProfile = $TemporaryProfile
             DesiredProfile = $DesiredProfile
+            ActiveProfile = if ([string]::IsNullOrWhiteSpace($ActiveProfile)) { $DesiredProfile } else { $ActiveProfile }
             CpuPercent = [double]$AutomationState.LastCpuPercent
             GpuPercent = [double]$AutomationState.LastGpuPercent
             ForegroundProcess = [string]$AutomationState.ForegroundProcess
@@ -1975,12 +2131,16 @@ function Export-OpenSynapseDiagnostics {
 
 function Invoke-QuietMaintenance {
     param([object]$Config, [object]$State)
-    $closed = @()
+    $processResult = [pscustomobject]@{
+        Closed = [string[]]@()
+        Restarted = [string[]]@()
+        CoolingDown = [string[]]@()
+    }
     if ([bool]$Config.CloseHighDrainAppsInQuiet) {
-        $closed = @(Stop-TrackedProcess @($Config.QuietProcessNames))
+        $processResult = Stop-TrackedProcess @($Config.QuietProcessNames) $Config
     }
     Stop-QuietServices $Config $State
-    return $closed
+    return $processResult
 }
 
 function Set-ActiveProfile {
@@ -2709,9 +2869,10 @@ function Test-OpenSynapse {
         throw 'Quiet endurance default mapping failed.'
     }
     if (-not [bool]$defaults.AdaptiveQuietCpu -or
-        (Resolve-QuietCpuMaxPercent $defaults ([pscustomobject]@{ BatteryPercent = 80 })) -ne 75 -or
-        (Resolve-QuietCpuMaxPercent $defaults ([pscustomobject]@{ BatteryPercent = 35 })) -ne 65 -or
-        (Resolve-QuietCpuMaxPercent $defaults ([pscustomobject]@{ BatteryPercent = 15 })) -ne 60) {
+        (Resolve-QuietCpuMaxPercent $defaults ([pscustomobject]@{ BatteryPercent = 80 })) -ne 65 -or
+        (Resolve-QuietCpuMaxPercent $defaults ([pscustomobject]@{ BatteryPercent = 50 })) -ne 60 -or
+        (Resolve-QuietCpuMaxPercent $defaults ([pscustomobject]@{ BatteryPercent = 15 })) -ne 50 -or
+        (Resolve-QuietCpuEppPercent $defaults ([pscustomobject]@{ BatteryPercent = 15 })) -ne 100) {
         throw 'Quiet adaptive CPU mapping failed.'
     }
     $hyperSustained = Resolve-HyperCpuPolicy $defaults
@@ -2965,6 +3126,7 @@ function Start-TrayApplication {
     $script:LastAppliedBrightnessTarget = $null
     $script:LastAppliedQuietCpuMax = $null
     $script:LastAppliedHyperCpuPolicy = $null
+    $script:QuietProcessGuard = @{}
     $script:ApplyInProgress = $false
     $script:LastApplyErrorNotification = [DateTime]::MinValue
     $script:MonitorTickRunning = $false
@@ -4437,7 +4599,12 @@ function Start-TrayApplication {
         $snapshot = Get-PowerSnapshot -UseCachedAdapter
         $leakWasDetected = [bool]$script:AutomationState.DgpuLeakDetected
         try {
-            $null = Update-SmartAutomationState $script:Config $snapshot $script:AutomationState
+            if ([string]$script:Config.Selection -eq 'Auto' -and [bool]$script:Config.SmartAutomationEnabled) {
+                $null = Update-SmartAutomationState $script:Config $snapshot $script:AutomationState
+            }
+            else {
+                $null = Update-ManualTelemetryState $script:Config $snapshot $script:AutomationState ([string]$script:Config.Selection)
+            }
             if (-not $leakWasDetected -and [bool]$script:AutomationState.DgpuLeakDetected) {
                 $consumerNames = [string[]]@($script:AutomationState.DgpuConsumers | ForEach-Object { [string]$_.ProcessName } | Select-Object -Unique)
                 $script:TrayIcon.BalloonTipTitle = 'OpenSynapse dGPU activity'
@@ -4483,9 +4650,16 @@ function Start-TrayApplication {
         }
         elseif ($desired -eq 'Quiet' -and ((Get-Date) - $script:LastMaintenance).TotalSeconds -ge [int]$script:Config.ProcessMaintenanceSeconds) {
             try {
-                $null = Invoke-QuietMaintenance $script:Config $script:State
+                $maintenanceResult = Invoke-QuietMaintenance $script:Config $script:State
                 Disable-QuietWakeDevices $script:Config $script:State
                 $script:LastMaintenance = Get-Date
+                if (@($maintenanceResult.CoolingDown).Count -gt 0) {
+                    $coolingNames = [string[]]@($maintenanceResult.CoolingDown)
+                    $cooldownMinutes = [Math]::Round([int]$script:Config.QuietProcessCooldownSeconds / 60)
+                    $script:TrayIcon.BalloonTipTitle = 'OpenSynapse Quiet cooling'
+                    $script:TrayIcon.BalloonTipText = "$($coolingNames -join ', ') restarted after Quiet closed it. Process enforcement is paused for $cooldownMinutes minutes to avoid a restart loop; disable its auto-start to keep it off."
+                    $script:TrayIcon.ShowBalloonTip(6000)
+                }
             }
             catch { Write-AppLog "Quiet maintenance failed: $($_.Exception.Message)" }
         }
@@ -4497,7 +4671,10 @@ function Start-TrayApplication {
         }
 
         if (((Get-Date) - $script:LastTelemetryRecord).TotalSeconds -ge 30) {
-            Write-TelemetryRecord $snapshot $script:AutomationState $desired ([string]$script:Config.Selection) $temporaryProfile
+            # Set-ActiveProfile verifies every transition and the monitor checks the
+            # active GUID on the same cadence, so the enforced profile is available
+            # without spawning an extra powercfg process on battery.
+            Write-TelemetryRecord $snapshot $script:AutomationState $desired ([string]$script:Config.Selection) $temporaryProfile $desired
             $script:LastTelemetryRecord = Get-Date
         }
 

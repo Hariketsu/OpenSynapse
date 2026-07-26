@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- 根据本机 Ryzen AI 9 365 离电日志，将 Quiet 的 DC CPU 曲线调整为 `>=70%: 65% / EPP 95`、`30–69%: 60% / EPP 95`、`<30%: 50% / EPP 100`，并同步第 0/1/2 类处理器上限与 EPP。
+- Quiet 的 DC 长/短线程调度改为优先高效核心；保留 Boost 关闭、CPPC 自动、核心停放与被动散热，不修改 OEM 异构核心增减阈值、TGP、风扇或 EC。
+- Smart Auto 在离电负载满足条件时仍可升到 Balance；手动选择 Quiet 时锁定 Quiet，并暂停 Smart Auto 决策推进与决策日志。
+- Quiet 检测到 NVIDIA Overlay 等辅助进程被关闭后快速重启时，停止反复结束进程，进入 30 分钟冷却并显示托盘提示。
+- 遥测历史升级到 schema 2，新增 `ActiveProfile`、`BatteryRemainingMwh`、`BatteryVoltageMv` 与 `EstimatedHours`。
+
 ## 2.4.1
 
 - 以 PowerPilot 2.4.1 单进程运行时重新构建发布版，并完成 OpenSynapse 品牌、任务、路径和身份替换。

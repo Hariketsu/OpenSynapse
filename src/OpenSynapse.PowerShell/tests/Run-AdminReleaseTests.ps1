@@ -24,6 +24,7 @@ $tests = @(
     [pscustomobject]@{ Name = 'power-policy-definition'; Script = 'Test-PowerPolicyDefinition.ps1' },
     [pscustomobject]@{ Name = 'hyper-performance'; Script = 'Test-HyperPerformance.ps1' },
     [pscustomobject]@{ Name = 'quiet-endurance'; Script = 'Test-QuietEndurance.ps1' },
+    [pscustomobject]@{ Name = 'quiet-control-semantics'; Script = 'Test-QuietControlSemantics.ps1' },
     [pscustomobject]@{ Name = 'supply-refresh-definition'; Script = 'Test-SupplyRefreshDefinition.ps1' },
     [pscustomobject]@{ Name = 'supply-debounce'; Script = 'Test-SupplyDebounce.ps1' },
     [pscustomobject]@{ Name = 'power-event-coalescing'; Script = 'Test-PowerEventCoalescing.ps1' },

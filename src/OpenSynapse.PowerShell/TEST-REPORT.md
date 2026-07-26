@@ -4,6 +4,18 @@
 分支：`dev-echo`
 参考：`ref/PowerPilot2.4.1`
 
+## 2026-07-26 Quiet v11 增量验证
+
+- PowerShell 解析、自检和 21 项定义/运行时里程碑测试：通过；
+- Quiet 专项：65/60/50% 三段 CPU 上限、95/95/100 EPP、三类处理器同步和高效核心调度：通过；
+- 控制语义：Auto 离电可升 Balance、手动 Quiet 锁定、手动决策日志暂停：通过；
+- NVIDIA Overlay 快速重启检测、30 分钟冷却和提示路径：通过；
+- telemetry schema 2 的 `ActiveProfile`、`BatteryRemainingMwh`、`BatteryVoltageMv`、`EstimatedHours`：通过；
+- OEM 异构核心增减阈值、TGP、风扇和 EC 不写入检查：通过；
+- .NET Core 38/38、Agent 52/52，Release 构建 0 警告/0 错误，格式检查：通过；
+- 发布目录与 `OpenSynapse-2.4.1.zip` 重新生成并通过原生 C# 编译检查；
+- 管理员电源计划回读套件因本轮 UAC 被取消而未执行；本轮没有安装，也没有修改本机现有电源计划。
+
 ## 结论
 
 发布运行时已重新建立在 PowerPilot 2.4.1 的单进程 PowerShell 5.1/WinForms 实现上，不再依赖 WPF、独立 Agent 或命名管道。PowerPilot 配置和系统状态已安全接管，OpenSynapse 计划任务、托盘进程、电源计划、快捷方式和 UI 均可正常运行。
@@ -11,7 +23,7 @@
 ## 自动测试
 
 - PowerShell 文件解析：通过；
-- 非破坏性脚本/定义测试：20/20 通过；
+- 非破坏性脚本/定义测试：21/21 通过；
 - 配置迁移：PowerPilot v1–v10、旧 .NET schema 10、中断接管文档均通过；
 - Razer HID：4 个白名单 PID、DPI/轮询率报告构造、事务和校验和通过；
 - .NET 历史回归：Core 38/38、Agent 52/52；

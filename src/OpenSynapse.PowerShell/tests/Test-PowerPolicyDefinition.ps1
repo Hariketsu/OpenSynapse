@@ -15,6 +15,7 @@ $mainScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'OpenSynapse.ps1'
 . $mainScript -Mode SelfTest
 
 $script:RecordedPlanPairs = @()
+$script:RecordedPlanValues = @()
 function Set-PlanPair {
     param(
         [string]$PlanGuid,
@@ -30,6 +31,24 @@ function Set-PlanPair {
         Setting = $Setting
         AcValue = $AcValue
         DcValue = $DcValue
+        Optional = [bool]$Optional
+    }
+}
+function Set-PlanValue {
+    param(
+        [string]$PlanGuid,
+        [string]$Source,
+        [string]$Subgroup,
+        [string]$Setting,
+        [int]$Value,
+        [switch]$Optional
+    )
+    $script:RecordedPlanValues += [pscustomobject]@{
+        PlanGuid = $PlanGuid
+        Source = $Source
+        Subgroup = $Subgroup
+        Setting = $Setting
+        Value = $Value
         Optional = [bool]$Optional
     }
 }
@@ -52,6 +71,7 @@ $balanceEpp = @($balancePairs | Where-Object { $_.Setting -eq $script:Guids.Proc
 $script:RecordedPlanPairs = @()
 Set-ProfilePolicy Quiet '00000000-0000-0000-0000-000000000002'
 $quietPairs = @($script:RecordedPlanPairs)
+$quietDcValues = @($script:RecordedPlanValues | Where-Object { $_.PlanGuid -eq '00000000-0000-0000-0000-000000000002' })
 $quietDisplay = @($quietPairs | Where-Object { $_.Setting -eq $script:Guids.DisplayTimeout })
 $quietCpuMax = @($quietPairs | Where-Object { $_.Setting -eq $script:Guids.ProcessorMaximum })
 $quietEpp = @($quietPairs | Where-Object { $_.Setting -eq $script:Guids.ProcessorEpp })
@@ -66,6 +86,7 @@ $result = [pscustomobject]@{
     HyperSettings = $hyperPairs.Count
     BalanceSettings = $balancePairs.Count
     QuietSettings = $quietPairs.Count
+    QuietDcClassSettings = $quietDcValues.Count
     HyperDisplayAcSeconds = if ($hyperDisplay.Count -eq 1) { $hyperDisplay[0].AcValue } else { -1 }
     HyperDisplayDcSeconds = if ($hyperDisplay.Count -eq 1) { $hyperDisplay[0].DcValue } else { -1 }
     HyperEppClasses = @(
@@ -102,10 +123,19 @@ if (-not ($result.HyperSettings -eq 26 -and $result.BalanceSettings -eq 13 -and 
     $result.BalanceDisplayAcSeconds -eq 600 -and $result.BalanceDisplayDcSeconds -eq 300 -and
     $result.BalanceEppAc -eq 50 -and $result.BalanceEppDc -eq 70 -and
     $result.QuietDisplayAcSeconds -eq 300 -and $result.QuietDisplayDcSeconds -eq 120 -and
-    $result.QuietCpuMaxDc -eq 75 -and $result.QuietEppDc -eq 95 -and
+    $result.QuietCpuMaxDc -eq 65 -and $result.QuietEppDc -eq 95 -and
     $result.QuietMinCoresDc -eq 0 -and $result.QuietMinCores1Dc -eq 0 -and
     $result.QuietGpuPreferenceDc -eq 1 -and $result.QuietWakeTimersDc -eq 0 -and
-    $result.QuietStandbyNetworkDc -eq 0)) {
+    $result.QuietStandbyNetworkDc -eq 0 -and $result.QuietDcClassSettings -eq 9 -and
+    @($quietDcValues | Where-Object {
+        $_.Setting -in @($script:Guids.ProcessorMaximum1, $script:Guids.ProcessorMaximum2) -and $_.Value -eq 65
+    }).Count -eq 2 -and
+    @($quietDcValues | Where-Object {
+        $_.Setting -in @($script:Guids.ProcessorEpp1, $script:Guids.ProcessorEpp2) -and $_.Value -eq 95
+    }).Count -eq 2 -and
+    @($quietDcValues | Where-Object {
+        $_.Setting -in @($script:Guids.ProcessorScheduling, $script:Guids.ProcessorShortScheduling) -and $_.Value -eq 4
+    }).Count -eq 2)) {
     throw 'Power policy definition verification failed.'
 }
 if ($ResultPath) { [IO.File]::WriteAllText([IO.Path]::GetFullPath($ResultPath), ($result | ConvertTo-Json), [Text.UTF8Encoding]::new($false)) }

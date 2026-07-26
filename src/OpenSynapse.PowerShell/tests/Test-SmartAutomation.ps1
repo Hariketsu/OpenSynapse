@@ -20,7 +20,7 @@ $pd = [pscustomobject]@{ Source = 'AC'; SupplyType = 'LowPowerPD'; BatteryPercen
 $batteryLow = [pscustomobject]@{ Source = 'Battery'; SupplyType = 'Battery'; BatteryPercent = 49; AdapterLimitW = $null }
 $unknown = [pscustomobject]@{ Source = 'AC'; SupplyType = 'UnknownAC'; BatteryPercent = 80; AdapterLimitW = $null }
 
-if ($config.Version -ne 10 -or -not [bool]$config.SmartAutomationEnabled -or
+if ($config.Version -ne 11 -or -not [bool]$config.SmartAutomationEnabled -or
     $config.SmartLoadEnterSamples -ne 3 -or $config.SmartExitSamples -ne 12 -or
     $config.SmartMinimumDwellSeconds -ne 30) {
     throw 'Smart automation defaults are incomplete.'

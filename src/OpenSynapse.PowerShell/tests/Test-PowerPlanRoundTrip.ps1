@@ -24,7 +24,7 @@ $mainScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'OpenSynapse.ps1'
 
 $cases = @(
     [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorMinimum; Hyper = @(5, 5); Balance = @(5, 5); Quiet = @(5, 5) },
-    [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorMaximum; Hyper = @(100, 100); Balance = @(100, 100); Quiet = @(80, 75) },
+    [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorMaximum; Hyper = @(100, 100); Balance = @(100, 100); Quiet = @(80, 65) },
     [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorEpp; Hyper = @(0, 0); Balance = @(50, 70); Quiet = @(90, 95) },
     [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorBoost; Hyper = @(2, 2); Balance = @(3, 3); Quiet = @(0, 0) },
     [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.CoolingPolicy; Hyper = @(1, 1); Balance = @(1, 0); Quiet = @(0, 0) },
@@ -62,6 +62,18 @@ $quietOnlyCases = @(
     [pscustomobject]@{ Sub = $script:Guids.NoSubgroup; Setting = $script:Guids.ConnectivityStandby; Expected = @(0, 0) }
 )
 
+$quietDcOnlyCases = @(
+    [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorMinimum1; ExpectedDc = 5 },
+    [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorMinimum2; ExpectedDc = 5 },
+    [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorMaximum1; ExpectedDc = 65 },
+    [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorMaximum2; ExpectedDc = 65 },
+    [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorEpp1; ExpectedDc = 95 },
+    [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorEpp2; ExpectedDc = 95 },
+    [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorAutonomous; ExpectedDc = 1 },
+    [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorScheduling; ExpectedDc = 4 },
+    [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.ProcessorShortScheduling; ExpectedDc = 4 }
+)
+
 function Get-PlanPair {
     param([string]$PlanGuid, [string]$Subgroup, [string]$Setting)
     $query = Invoke-PowerCfg @('/qh', $PlanGuid, $Subgroup, $Setting)
@@ -97,6 +109,12 @@ function Assert-Profile {
                 throw "Quiet verification failed for $($case.Setting): expected $($expected -join '/'), got $($actual -join '/')"
             }
         }
+        foreach ($case in $quietDcOnlyCases) {
+            $actual = @(Get-PlanPair $PlanGuid $case.Sub $case.Setting)
+            if ($actual[1] -ne $case.ExpectedDc) {
+                throw "Quiet DC verification failed for $($case.Setting): expected $($case.ExpectedDc), got $($actual[1])"
+            }
+        }
     }
 }
 
@@ -121,15 +139,33 @@ try {
     $dynamicState = [pscustomobject]@{ QuietPlanGuid = $temporary }
     $script:LastAppliedQuietCpuMax = $null
     foreach ($dynamicCase in @(
-        [pscustomobject]@{ BatteryPercent = 35; Expected = 65 },
-        [pscustomobject]@{ BatteryPercent = 15; Expected = 60 },
-        [pscustomobject]@{ BatteryPercent = 80; Expected = 75 }
+        [pscustomobject]@{ BatteryPercent = 50; Expected = 60; Epp = 95 },
+        [pscustomobject]@{ BatteryPercent = 15; Expected = 50; Epp = 100 },
+        [pscustomobject]@{ BatteryPercent = 80; Expected = 65; Epp = 95 }
     )) {
         $snapshot = [pscustomobject]@{ Source = 'Battery'; BatteryPercent = $dynamicCase.BatteryPercent }
         $actualTarget = Apply-QuietDynamicCpuPolicy $dynamicConfig $dynamicState $snapshot
         $actualPair = @(Get-PlanPair $temporary $script:Guids.Processor $script:Guids.ProcessorMaximum)
         if ($actualTarget -ne $dynamicCase.Expected -or $actualPair[0] -ne 80 -or $actualPair[1] -ne $dynamicCase.Expected) {
             throw "Dynamic Quiet CPU verification failed at $($dynamicCase.BatteryPercent)%: target=$actualTarget pair=$($actualPair -join '/')"
+        }
+        foreach ($setting in @($script:Guids.ProcessorMaximum1, $script:Guids.ProcessorMaximum2)) {
+            $classPair = @(Get-PlanPair $temporary $script:Guids.Processor $setting)
+            if ($classPair[1] -ne $dynamicCase.Expected) {
+                throw "Dynamic Quiet class maximum verification failed for $setting at $($dynamicCase.BatteryPercent)%."
+            }
+        }
+        foreach ($setting in @($script:Guids.ProcessorEpp, $script:Guids.ProcessorEpp1, $script:Guids.ProcessorEpp2)) {
+            $classPair = @(Get-PlanPair $temporary $script:Guids.Processor $setting)
+            if ($classPair[1] -ne $dynamicCase.Epp) {
+                throw "Dynamic Quiet EPP verification failed for $setting at $($dynamicCase.BatteryPercent)%."
+            }
+        }
+        foreach ($setting in @($script:Guids.ProcessorScheduling, $script:Guids.ProcessorShortScheduling)) {
+            $classPair = @(Get-PlanPair $temporary $script:Guids.Processor $setting)
+            if ($classPair[1] -ne 4) {
+                throw "Dynamic Quiet scheduling verification failed for $setting."
+            }
         }
     }
     Invoke-PowerCfg @('/setactive', $original) | Out-Null
@@ -139,6 +175,7 @@ try {
         SettingsVerifiedPerProfile = $cases.Count
         HyperAdditionalSettingsVerified = $hyperOnlyCases.Count
         QuietAdditionalSettingsVerified = $quietOnlyCases.Count
+        QuietDcClassSettingsVerified = $quietDcOnlyCases.Count
         DynamicQuietCpuTargetsVerified = 3
         ProfilesVerified = 3
         ActivePlanRestored = ((Get-ActivePlanGuid) -eq $original)

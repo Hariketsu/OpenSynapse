@@ -15,6 +15,14 @@ OpenSynapse 是基于 PowerPilot 2.4.1 重新移植的 Windows 电源、显示�
 
 OpenSynapse 只使用公开 Windows 接口和标准 HID feature report。它不写 Razer EC，不控制风扇、TGP 或 MUX，也不安装或替换内核驱动。
 
+## 离电 Quiet 策略
+
+Smart Auto 在电池或 USB-C PD 下以 Quiet 为低负载基线，电量不低于 Balance 安全阈值且应用、CPU 或 GPU 负载持续满足条件时可以临时升到 Balance。手动选择 Quiet 后，Quiet 是强制档位，不会被自动决策切换到 Balance。
+
+Ryzen AI 9 365 的 Quiet DC 曲线会同步应用到第 0/1/2 类处理器：电量不低于 70% 时最大状态 65%、EPP 95；30–69% 时为 60%、EPP 95；低于 30% 时为 50%、EPP 100。长、短线程均优先高效核心。该策略不修改 OEM 异构核心增减阈值、TGP、风扇或 EC。
+
+Quiet 关闭 NVIDIA Overlay 等高耗电辅助进程后，如果检测到它在 10 分钟内自动重启，OpenSynapse 会停止反复结束该进程，进入 30 分钟冷却并显示托盘提示。若希望它持续关闭，应在对应软件中禁用 Overlay 自动启动。
+
 ## 安装
 
 解压后双击 `Install-OpenSynapse.cmd`，或在 PowerShell 中运行：
@@ -59,7 +67,10 @@ powershell -ExecutionPolicy Bypass -File .\OpenSynapse.ps1 -Mode Open
 - 回滚状态：`%LOCALAPPDATA%\OpenSynapse\state.json`
 - 运行记录：`%LOCALAPPDATA%\OpenSynapse\runtime.json`
 - 日志：`%LOCALAPPDATA%\OpenSynapse\OpenSynapse.log`
+- 遥测历史：`%LOCALAPPDATA%\OpenSynapse\telemetry.jsonl`
 
 配置和状态采用原子替换并保留备份。旧 .NET schema-10 文件和 PowerPilot 接管记录会以独立迁移文件归档，避免被新运行时误读。
+
+遥测历史 schema 2 包含实际档位 `ActiveProfile`、剩余容量 `BatteryRemainingMwh`、电池电压 `BatteryVoltageMv` 和平滑续航估算 `EstimatedHours`。
 
 详见 `TEST-REPORT.md`。

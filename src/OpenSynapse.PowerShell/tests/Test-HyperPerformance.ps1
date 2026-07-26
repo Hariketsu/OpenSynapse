@@ -21,7 +21,7 @@ if ($null -eq (Get-Variable -Name LastAppliedHyperCpuPolicy -Scope Script -Error
 }
 
 $config = Get-DefaultConfig
-if ($config.Version -ne 10 -or $config.HyperCpuPolicy -ne 'Sustained') {
+if ($config.Version -ne 11 -or $config.HyperCpuPolicy -ne 'Sustained') {
     throw 'Hyper performance defaults are incomplete.'
 }
 $sustained = Resolve-HyperCpuPolicy $config

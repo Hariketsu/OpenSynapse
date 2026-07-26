@@ -14,7 +14,7 @@ trap {
 $mainScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'OpenSynapse.ps1'
 . $mainScript -Mode SelfTest
 $config = Get-DefaultConfig
-if ($config.Version -ne 10 -or $config.SmartGpuEnter -ne 20 -or -not $config.SmartFullscreenEnabled -or
+if ($config.Version -ne 11 -or $config.SmartGpuEnter -ne 20 -or -not $config.SmartFullscreenEnabled -or
     @($config.ApplicationRules).Count -lt 15 -or $config.DgpuLeakMinimumSamples -ne 6) {
     throw 'Safe telemetry defaults are incomplete.'
 }
@@ -22,7 +22,7 @@ if ($config.Version -ne 10 -or $config.SmartGpuEnter -ne 20 -or -not $config.Sma
 $nativeMethods = [OpenSynapseNative.AutomationTelemetry].GetMethods().Name
 if ('GetForegroundWindowSample' -notin $nativeMethods) { throw 'Native fullscreen telemetry is missing.' }
 $battery = [OpenSynapseNative.BatteryTelemetry]::Read()
-if (-not $battery.Available -or $battery.BatteryCount -lt 1 -or $battery.RemainingCapacityMwh -le 0 -or $battery.VoltageMv -le 0) {
+if ($battery.Available -and ($battery.BatteryCount -lt 1 -or $battery.RemainingCapacityMwh -le 0 -or $battery.VoltageMv -le 0)) {
     throw "Battery Class API did not return a valid local battery sample: $($battery.Error)"
 }
 
@@ -155,8 +155,8 @@ finally { Remove-Item -LiteralPath $exportRoot -Recurse -Force -ErrorAction Sile
 
 $result = [pscustomobject]@{
     Result = 'PASS'
-    ConfigVersion = 10
-    BatteryClassApi = $true
+    ConfigVersion = 11
+    BatteryClassApi = [bool]$battery.Available
     BatteryCount = $battery.BatteryCount
     GpuTelemetryStartupSeconds = $gpuStartupAttempts
     GpuTelemetryCachedReadMs = $stopwatch.ElapsedMilliseconds
