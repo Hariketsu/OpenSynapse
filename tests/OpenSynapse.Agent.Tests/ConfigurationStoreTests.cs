@@ -1,0 +1,159 @@
+using OpenSynapse.Core;
+
+namespace OpenSynapse.Agent.Tests;
+
+[TestClass]
+public sealed class ConfigurationStoreTests
+{
+    private string directory = null!;
+    private string configPath = null!;
+
+    [TestInitialize]
+    public void Initialize()
+    {
+        directory = Path.Combine(Path.GetTempPath(), "OpenSynapse.Tests", Guid.NewGuid().ToString("N"));
+        configPath = Path.Combine(directory, "config.json");
+        Directory.CreateDirectory(directory);
+    }
+
+    [TestCleanup]
+    public void Cleanup()
+    {
+        if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+    }
+
+    [TestMethod]
+    public void LoadCreatesDefaultsAndMigratesLegacySelection()
+    {
+        var config = new ConfigurationStore(configPath).Load(ModeSelection.Balanced);
+
+        Assert.AreEqual(OpenSynapseConfig.CurrentSchemaVersion, config.SchemaVersion);
+        Assert.AreEqual(ModeSelection.Balanced, config.Selection);
+        Assert.AreEqual(50, config.BalancedBatteryThresholdPercent);
+        Assert.IsTrue(config.ManageAdvancedColor);
+        Assert.IsTrue(config.ManageBrightness);
+        Assert.IsTrue(config.ManageDisplayScaling);
+        Assert.AreEqual(RefreshPolicy.FollowMode, config.RefreshPolicy);
+        Assert.AreEqual(150, config.InternalDisplayScalePercent);
+        Assert.AreEqual(125, config.ExternalDisplayScalePercent);
+        Assert.IsFalse(config.ManageWakeDevices);
+        Assert.IsEmpty(config.QuietWakeDeviceNames);
+        Assert.IsTrue(File.Exists(configPath));
+    }
+
+    [TestMethod]
+    public void SaveAndLoadRoundTripsDisplayPolicy()
+    {
+        var expected = new OpenSynapseConfig
+        {
+            Selection = ModeSelection.Quiet,
+            BalancedBatteryThresholdPercent = 55,
+            ManageAdvancedColor = false,
+            ManageBrightness = false,
+            ManageDisplayScaling = false,
+            RefreshPolicy = RefreshPolicy.Fixed240,
+            InternalDisplayScalePercent = 175,
+            ExternalDisplayScalePercent = 150,
+            BalancedBrightnessPercent = 65,
+            QuietBrightnessPercent = 35,
+            BalancedRefreshRateHz = 144,
+            QuietRefreshRateHz = 75,
+            ManageWakeDevices = true,
+            QuietWakeDeviceNames = ["MediaTek Wi-Fi", "HID-compliant mouse"]
+        };
+        var store = new ConfigurationStore(configPath);
+
+        store.Save(expected);
+        var actual = store.Load();
+
+        Assert.AreEqual(expected.Selection, actual.Selection);
+        Assert.AreEqual(expected.BalancedBatteryThresholdPercent, actual.BalancedBatteryThresholdPercent);
+        Assert.AreEqual(expected.ManageAdvancedColor, actual.ManageAdvancedColor);
+        Assert.AreEqual(expected.ManageBrightness, actual.ManageBrightness);
+        Assert.AreEqual(expected.ManageDisplayScaling, actual.ManageDisplayScaling);
+        Assert.AreEqual(expected.RefreshPolicy, actual.RefreshPolicy);
+        Assert.AreEqual(expected.InternalDisplayScalePercent, actual.InternalDisplayScalePercent);
+        Assert.AreEqual(expected.ExternalDisplayScalePercent, actual.ExternalDisplayScalePercent);
+        Assert.AreEqual(expected.BalancedBrightnessPercent, actual.BalancedBrightnessPercent);
+        Assert.AreEqual(expected.QuietBrightnessPercent, actual.QuietBrightnessPercent);
+        Assert.AreEqual(expected.BalancedRefreshRateHz, actual.BalancedRefreshRateHz);
+        Assert.AreEqual(expected.QuietRefreshRateHz, actual.QuietRefreshRateHz);
+        Assert.AreEqual(expected.ManageWakeDevices, actual.ManageWakeDevices);
+        CollectionAssert.AreEqual(expected.QuietWakeDeviceNames, actual.QuietWakeDeviceNames);
+    }
+
+    [TestMethod]
+    public void WithDisplayPolicyPreservesSelectionAndMapsEverySetting()
+    {
+        var original = new OpenSynapseConfig { Selection = ModeSelection.Performance };
+        var settings = new DisplayPolicySettings(
+            55,
+            false,
+            false,
+            false,
+            RefreshPolicy.Fixed240,
+            175,
+            150,
+            65,
+            35,
+            144,
+            75);
+
+        var updated = original.WithDisplayPolicy(settings);
+
+        Assert.AreEqual(ModeSelection.Performance, updated.Selection);
+        Assert.AreEqual(settings, updated.ToDisplayPolicySettings());
+        Assert.AreEqual(RefreshPolicy.FollowMode, original.RefreshPolicy);
+    }
+
+    [TestMethod]
+    public void WithQuietMaintenancePreservesDisplayPolicyAndCopiesTheAllowlist()
+    {
+        var original = new OpenSynapseConfig { RefreshPolicy = RefreshPolicy.Fixed120 };
+        var names = new[] { "MediaTek Wi-Fi", "HID-compliant mouse" };
+
+        var updated = original.WithQuietMaintenance(new QuietMaintenanceSettings(true, names));
+        names[0] = "Changed after update";
+
+        Assert.AreEqual(RefreshPolicy.Fixed120, updated.RefreshPolicy);
+        Assert.IsTrue(updated.ManageWakeDevices);
+        CollectionAssert.AreEqual(
+            new[] { "MediaTek Wi-Fi", "HID-compliant mouse" },
+            updated.QuietWakeDeviceNames);
+        Assert.IsFalse(original.ManageWakeDevices);
+    }
+
+    [TestMethod]
+    public void LoadRejectsInvalidConfigurationWithoutOverwritingIt()
+    {
+        const string invalid = "{\"schemaVersion\":1,\"internalDisplayScalePercent\":110}";
+        File.WriteAllText(configPath, invalid);
+
+        Assert.ThrowsExactly<InvalidDataException>(() => new ConfigurationStore(configPath).Load());
+        Assert.AreEqual(invalid, File.ReadAllText(configPath));
+    }
+
+    [TestMethod]
+    public void LoadRejectsConfigurationFromANewerSchema()
+    {
+        File.WriteAllText(
+            configPath,
+            "{\"schemaVersion\":" + (OpenSynapseConfig.CurrentSchemaVersion + 1) + "}");
+
+        Assert.ThrowsExactly<NotSupportedException>(() => new ConfigurationStore(configPath).Load());
+    }
+
+    [TestMethod]
+    public void LoadPersistsSchemaUpgradeAndNewDefaults()
+    {
+        File.WriteAllText(configPath, "{\"schemaVersion\":1,\"selection\":\"Auto\"}");
+
+        var config = new ConfigurationStore(configPath).Load();
+
+        Assert.AreEqual(OpenSynapseConfig.CurrentSchemaVersion, config.SchemaVersion);
+        StringAssert.Contains(
+            File.ReadAllText(configPath),
+            $"\"schemaVersion\":{OpenSynapseConfig.CurrentSchemaVersion}");
+        StringAssert.Contains(File.ReadAllText(configPath), "\"refreshPolicy\":\"FollowMode\"");
+    }
+}

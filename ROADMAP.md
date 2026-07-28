@@ -12,9 +12,11 @@ The roadmap describes validation gates, not delivery dates. A capability moves f
 ## Foundation — M0 to M3
 
 - [x] .NET solution, Windows CI, tests, license, and project documentation.
-- [x] Non-elevated WPF control panel and per-user elevated agent.
-- [x] Auto, Performance, and Quiet policy selection.
+- [x] PowerPilot 2.4.1-compatible elevated WinForms tray/control process with delayed per-user scheduled task.
+  - [x] Adapter-aware Auto, Hyper, Balance, and Quiet policy selection.
 - [x] Captured state and power-plan rollback.
+- [x] Validated desktop editing for display policy, scaling, brightness, and refresh behavior.
+- [x] Default-off, exact-allowlist Quiet wake-device control with durable verified rollback.
 - [x] DeathAdder V3 Pro discovery, status, DPI, and standard polling commands.
 - [ ] Run the reversible Windows policy smoke test on the target machine.
 - [ ] Run read/write verification on each claimed DeathAdder V3 Pro PID and connection role.
@@ -22,9 +24,9 @@ The roadmap describes validation gates, not delivery dates. A capability moves f
 
 ## First public alpha
 
-- Windows installation, elevation, startup, single-instance, and uninstall lifecycle.
-- Removal of OpenSynapse-managed power plans during uninstall.
-- Versioned state schema and durable diagnostic logs.
+- Windows installation, elevation, startup, single-instance, and uninstall lifecycle (implemented; live validation pending).
+- Verified removal of OpenSynapse-managed power plans during uninstall (implemented; live validation pending).
+- Versioned configuration/state schemas, bounded diagnostic logs, and read-only self-test (implemented; target-Windows validation ongoing).
 - A documented elevated-agent threat model.
 - Repeatable Windows integration tests and a maintained compatibility matrix.
 - Signed or checksummed preview artifacts with a changelog.

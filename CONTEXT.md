@@ -5,7 +5,7 @@ OpenSynapse controls supported Windows system and Razer device capabilities whil
 ## Language
 
 **Operating Mode**:
-A named set of desired system states. OpenSynapse currently defines Performance and Quiet.
+A named set of desired system states. OpenSynapse currently defines Performance, Balanced, and Quiet.
 _Avoid_: Profile, preset
 
 **Mode Selection**:
@@ -13,7 +13,7 @@ The user's instruction for choosing an Operating Mode. It may name a mode direct
 _Avoid_: Mode, profile
 
 **Auto**:
-A Mode Selection that resolves to Performance on AC power and Quiet on battery or an unknown source.
+A Mode Selection that resolves to Performance only on verified high-power AC and Quiet on low-power, battery, ambiguous, or unknown input.
 _Avoid_: Auto mode
 
 **Capability**:

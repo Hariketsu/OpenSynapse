@@ -3,27 +3,73 @@ using OpenSynapse.Core;
 
 namespace OpenSynapse.Agent;
 
+internal readonly record struct PowerPlanValues(int Ac, int Dc);
+
+internal sealed record PowerPlanSetting(
+    string Subgroup,
+    string Setting,
+    PowerPlanValues Performance,
+    PowerPlanValues Balanced,
+    PowerPlanValues Quiet,
+    bool Optional,
+    OperatingMode? OnlyMode = null)
+{
+    public PowerPlanValues GetValues(OperatingMode mode) => mode switch
+    {
+        OperatingMode.Performance => Performance,
+        OperatingMode.Balanced => Balanced,
+        OperatingMode.Quiet => Quiet,
+        _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unsupported operating mode.")
+    };
+}
+
 internal sealed partial class PowerPlanManager
 {
-    private const string Balanced = "381b4222-f694-41f0-9685-ff5bb260df2e";
-    private readonly string powerCfg = Path.Combine(Environment.SystemDirectory, "powercfg.exe");
+    private const string BalancedScheme = "381b4222-f694-41f0-9685-ff5bb260df2e";
+    private const string PerformancePlanName = "OpenSynapse Performance";
+    private const string BalancedPlanName = "OpenSynapse Balanced";
+    private const string QuietPlanName = "OpenSynapse Quiet";
+    private readonly Func<IReadOnlyList<string>, string> run;
 
-    private static readonly (string Subgroup, string Setting, int PerfAc, int PerfDc, int QuietAc, int QuietDc, bool Optional)[] Settings =
+    internal static IReadOnlyList<PowerPlanSetting> PolicySettings { get; } =
     [
-        ("54533251-82be-4824-96c1-47b60b740d00", "893dee8e-2bef-41e0-89c6-b55d0929964c", 5, 5, 5, 5, false),
-        ("54533251-82be-4824-96c1-47b60b740d00", "bc5038f7-23e0-4960-96da-33abaf5935ec", 100, 100, 80, 80, false),
-        ("54533251-82be-4824-96c1-47b60b740d00", "36687f9e-e3a5-4dbf-b1dc-15eb381c6863", 0, 20, 90, 90, true),
-        ("54533251-82be-4824-96c1-47b60b740d00", "be337238-0d82-4146-a960-4f3749d470c7", 2, 2, 0, 0, true),
-        ("54533251-82be-4824-96c1-47b60b740d00", "94d3a615-a899-4ac5-ae2b-e4d8f634367f", 1, 1, 0, 0, true),
-        ("19cbb8fa-5279-450e-9fac-8a3d5fedd0c1", "12bbebe6-58d6-4636-95bb-3217ef867c1a", 0, 1, 3, 3, true),
-        ("501a4d13-42af-4429-9fd1-a8218c268e20", "ee12f906-d277-404b-b6da-e5fa1a576df5", 0, 1, 2, 2, true),
-        ("7516b95f-f776-4464-8c53-06167f40cc99", "3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e", 0, 300, 300, 120, false),
-        ("2a737441-1930-4402-8d77-b2bebba308a3", "48e6b7a6-50f5-4782-a5d4-53bb8f07e226", 0, 1, 1, 1, true),
-        ("de830923-a562-41af-a086-e3a2c6bad2da", "e69653ca-cf7f-4f05-aa73-cb833fa90ad4", 0, 20, 0, 100, true),
-        ("238c9fa8-0aad-41ed-83f4-97be242c8f20", "29f6c1db-86da-48c5-9fdb-f2b67b1f44da", 0, 900, 600, 180, false),
-        ("238c9fa8-0aad-41ed-83f4-97be242c8f20", "9d7815a6-7ee4-497e-8888-515a05f02364", 0, 3600, 1800, 900, false),
-        ("4f971e89-eebd-4455-a8de-9e59040e7347", "5ca83367-6e45-459f-a27b-476b1d01c936", 1, 1, 1, 2, false)
+        new("54533251-82be-4824-96c1-47b60b740d00", "893dee8e-2bef-41e0-89c6-b55d0929964c", new(5, 5), new(5, 5), new(5, 5), false),
+        new("54533251-82be-4824-96c1-47b60b740d00", "bc5038f7-23e0-4960-96da-33abaf5935ec", new(100, 100), new(100, 100), new(80, 75), false),
+        new("54533251-82be-4824-96c1-47b60b740d00", "36687f9e-e3a5-4dbf-b1dc-15eb381c6863", new(0, 20), new(50, 70), new(90, 95), true),
+        new("54533251-82be-4824-96c1-47b60b740d00", "be337238-0d82-4146-a960-4f3749d470c7", new(2, 2), new(3, 3), new(0, 0), true),
+        new("54533251-82be-4824-96c1-47b60b740d00", "94d3a615-a899-4ac5-ae2b-e4d8f634367f", new(1, 1), new(1, 0), new(0, 0), true),
+        new("19cbb8fa-5279-450e-9fac-8a3d5fedd0c1", "12bbebe6-58d6-4636-95bb-3217ef867c1a", new(0, 1), new(1, 2), new(3, 3), true),
+        new("501a4d13-42af-4429-9fd1-a8218c268e20", "ee12f906-d277-404b-b6da-e5fa1a576df5", new(0, 1), new(1, 2), new(2, 2), true),
+        new("7516b95f-f776-4464-8c53-06167f40cc99", "3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e", new(900, 300), new(600, 300), new(300, 120), false),
+        new("2a737441-1930-4402-8d77-b2bebba308a3", "48e6b7a6-50f5-4782-a5d4-53bb8f07e226", new(0, 1), new(1, 1), new(1, 1), true),
+        new("de830923-a562-41af-a086-e3a2c6bad2da", "e69653ca-cf7f-4f05-aa73-cb833fa90ad4", new(0, 20), new(0, 50), new(0, 100), true),
+        new("238c9fa8-0aad-41ed-83f4-97be242c8f20", "29f6c1db-86da-48c5-9fdb-f2b67b1f44da", new(0, 900), new(900, 600), new(600, 180), false),
+        new("238c9fa8-0aad-41ed-83f4-97be242c8f20", "9d7815a6-7ee4-497e-8888-515a05f02364", new(0, 3600), new(3600, 1800), new(1800, 900), false),
+        new("4f971e89-eebd-4455-a8de-9e59040e7347", "5ca83367-6e45-459f-a27b-476b1d01c936", new(1, 1), new(1, 2), new(1, 2), false),
+        new("54533251-82be-4824-96c1-47b60b740d00", "893dee8e-2bef-41e0-89c6-b55d0929964d", new(5, 5), new(0, 0), new(0, 0), true, OperatingMode.Performance),
+        new("54533251-82be-4824-96c1-47b60b740d00", "893dee8e-2bef-41e0-89c6-b55d0929964e", new(5, 5), new(0, 0), new(0, 0), true, OperatingMode.Performance),
+        new("54533251-82be-4824-96c1-47b60b740d00", "bc5038f7-23e0-4960-96da-33abaf5935ed", new(100, 100), new(0, 0), new(0, 0), true, OperatingMode.Performance),
+        new("54533251-82be-4824-96c1-47b60b740d00", "bc5038f7-23e0-4960-96da-33abaf5935ee", new(100, 100), new(0, 0), new(0, 0), true, OperatingMode.Performance),
+        new("54533251-82be-4824-96c1-47b60b740d00", "45bcc044-d885-43e2-8605-ee0ec6e96b59", new(100, 100), new(0, 0), new(0, 0), true, OperatingMode.Performance),
+        new("54533251-82be-4824-96c1-47b60b740d00", "8baa4a8a-14c6-4451-8e8b-14bdbd197537", new(1, 1), new(0, 0), new(0, 0), true, OperatingMode.Performance),
+        new("54533251-82be-4824-96c1-47b60b740d00", "465e1f50-b610-473a-ab58-00d1077dc418", new(2, 2), new(0, 0), new(0, 0), true, OperatingMode.Performance),
+        new("54533251-82be-4824-96c1-47b60b740d00", "465e1f50-b610-473a-ab58-00d1077dc419", new(3, 3), new(0, 0), new(0, 0), true, OperatingMode.Performance),
+        new("54533251-82be-4824-96c1-47b60b740d00", "0cc5b647-c1df-4637-891a-dec35c318583", new(100, 100), new(0, 0), new(0, 0), true, OperatingMode.Performance),
+        new("54533251-82be-4824-96c1-47b60b740d00", "0cc5b647-c1df-4637-891a-dec35c318584", new(0, 0), new(0, 0), new(0, 0), true, OperatingMode.Performance),
+        new("238c9fa8-0aad-41ed-83f4-97be242c8f20", "bd3b718a-0680-4d9d-8ab2-e1d2b4ac806d", new(0, 0), new(0, 0), new(0, 0), true, OperatingMode.Quiet),
+        new("fea3413e-7e05-4911-9a71-700331f1c294", "f15576e8-98b7-4186-b944-eafa664402d9", new(0, 0), new(0, 0), new(0, 0), true, OperatingMode.Quiet)
     ];
+
+    public PowerPlanManager()
+    {
+        var powerCfg = Path.Combine(Environment.SystemDirectory, "powercfg.exe");
+        run = arguments => ProcessRunner.Run(powerCfg, arguments.ToArray());
+    }
+
+    internal PowerPlanManager(Func<IReadOnlyList<string>, string> run)
+    {
+        this.run = run;
+    }
 
     public string GetActiveGuid() => ParseGuid(Run("/getactivescheme"));
 
@@ -31,12 +77,46 @@ internal sealed partial class PowerPlanManager
     {
         state.OriginalPowerPlan ??= GetActiveGuid();
         EnsurePlans(state);
-        var target = mode == OperatingMode.Performance ? state.PerformancePowerPlan! : state.QuietPowerPlan!;
+        var target = mode switch
+        {
+            OperatingMode.Performance => state.PerformancePowerPlan!,
+            OperatingMode.Balanced => state.BalancedPowerPlan!,
+            OperatingMode.Quiet => state.QuietPowerPlan!,
+            _ => throw new ArgumentOutOfRangeException(nameof(mode), mode, "Unsupported operating mode.")
+        };
         Run("/setactive", target);
         var active = GetActiveGuid();
         if (!active.Equals(target, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException($"Power plan activation failed: expected {target}, got {active}.");
         return active;
+    }
+
+    public void ApplyQuietCpuMax(OpenSynapseState state, int dcMaximumPercent)
+    {
+        if (state.QuietPowerPlan is null)
+            throw new InvalidOperationException("Quiet power plan has not been created.");
+        if (dcMaximumPercent is < 1 or > 100)
+            throw new ArgumentOutOfRangeException(nameof(dcMaximumPercent));
+        Run("/setdcvalueindex", state.QuietPowerPlan,
+            "54533251-82be-4824-96c1-47b60b740d00",
+            "bc5038f7-23e0-4960-96da-33abaf5935ec",
+            dcMaximumPercent.ToString());
+    }
+
+    public void ApplyHyperCpuPolicy(OpenSynapseState state, HyperCpuPolicy policy)
+    {
+        if (state.PerformancePowerPlan is null)
+            throw new InvalidOperationException("Hyper power plan has not been created.");
+        var minimum = policy == HyperCpuPolicy.Latency ? 100 : 5;
+        var minimum1 = policy == HyperCpuPolicy.Latency ? 100 : 5;
+        var minimum2 = policy == HyperCpuPolicy.Latency ? 100 : 5;
+        var parked = policy == HyperCpuPolicy.Latency ? 100 : 0;
+        var subgroup = "54533251-82be-4824-96c1-47b60b740d00";
+        SetPair(state.PerformancePowerPlan, subgroup, "893dee8e-2bef-41e0-89c6-b55d0929964c", minimum);
+        SetPair(state.PerformancePowerPlan, subgroup, "893dee8e-2bef-41e0-89c6-b55d0929964d", minimum1);
+        SetPair(state.PerformancePowerPlan, subgroup, "893dee8e-2bef-41e0-89c6-b55d0929964e", minimum2);
+        SetPair(state.PerformancePowerPlan, subgroup, "0cc5b647-c1df-4637-891a-dec35c318583", 100);
+        SetPair(state.PerformancePowerPlan, subgroup, "0cc5b647-c1df-4637-891a-dec35c318584", parked);
     }
 
     public void Restore(OpenSynapseState state)
@@ -51,17 +131,31 @@ internal sealed partial class PowerPlanManager
         state.OriginalPowerPlan = null;
     }
 
+    public void DeleteManagedPlans(OpenSynapseState state)
+    {
+        var active = GetActiveGuid();
+        state.PerformancePowerPlan = DeleteManagedPlan(state.PerformancePowerPlan, active, PerformancePlanName);
+        state.BalancedPowerPlan = DeleteManagedPlan(state.BalancedPowerPlan, active, BalancedPlanName);
+        state.QuietPowerPlan = DeleteManagedPlan(state.QuietPowerPlan, active, QuietPlanName);
+    }
+
     private void EnsurePlans(OpenSynapseState state)
     {
-        if (!Exists(state.PerformancePowerPlan))
+        if (!IsManagedPlan(state.PerformancePowerPlan, PerformancePlanName))
         {
-            var plan = Duplicate("OpenSynapse Performance");
+            var plan = Duplicate(PerformancePlanName);
             Configure(plan, OperatingMode.Performance);
             state.PerformancePowerPlan = plan;
         }
-        if (!Exists(state.QuietPowerPlan))
+        if (!IsManagedPlan(state.BalancedPowerPlan, BalancedPlanName))
         {
-            var plan = Duplicate("OpenSynapse Quiet");
+            var plan = Duplicate(BalancedPlanName);
+            Configure(plan, OperatingMode.Balanced);
+            state.BalancedPowerPlan = plan;
+        }
+        if (!IsManagedPlan(state.QuietPowerPlan, QuietPlanName))
+        {
+            var plan = Duplicate(QuietPlanName);
             Configure(plan, OperatingMode.Quiet);
             state.QuietPowerPlan = plan;
         }
@@ -69,21 +163,21 @@ internal sealed partial class PowerPlanManager
 
     private string Duplicate(string name)
     {
-        var guid = ParseGuid(Run("/duplicatescheme", Balanced));
+        var guid = ParseGuid(Run("/duplicatescheme", BalancedScheme));
         Run("/changename", guid, name, "Managed by OpenSynapse");
         return guid;
     }
 
     private void Configure(string guid, OperatingMode mode)
     {
-        foreach (var setting in Settings)
+        foreach (var setting in PolicySettings)
         {
-            var ac = mode == OperatingMode.Performance ? setting.PerfAc : setting.QuietAc;
-            var dc = mode == OperatingMode.Performance ? setting.PerfDc : setting.QuietDc;
+            if (setting.OnlyMode is not null && setting.OnlyMode != mode) continue;
+            var values = setting.GetValues(mode);
             try
             {
-                Run("/setacvalueindex", guid, setting.Subgroup, setting.Setting, ac.ToString());
-                Run("/setdcvalueindex", guid, setting.Subgroup, setting.Setting, dc.ToString());
+                Run("/setacvalueindex", guid, setting.Subgroup, setting.Setting, values.Ac.ToString());
+                Run("/setdcvalueindex", guid, setting.Subgroup, setting.Setting, values.Dc.ToString());
             }
             catch when (setting.Optional) { }
         }
@@ -92,7 +186,39 @@ internal sealed partial class PowerPlanManager
     private bool Exists(string? guid) => !string.IsNullOrWhiteSpace(guid)
         && Run("/list").Contains(guid, StringComparison.OrdinalIgnoreCase);
 
-    private string Run(params string[] arguments) => ProcessRunner.Run(powerCfg, arguments);
+    private bool IsManagedPlan(string? guid, string expectedName)
+    {
+        if (string.IsNullOrWhiteSpace(guid)) return false;
+        return Run("/list")
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Any(line => line.Contains(guid, StringComparison.OrdinalIgnoreCase)
+                && line.Contains($"({expectedName})", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private string? DeleteManagedPlan(string? guid, string active, string expectedName)
+    {
+        if (!Exists(guid)) return null;
+        if (!IsManagedPlan(guid, expectedName))
+            throw new InvalidOperationException(
+                $"Power plan {guid} is not marked as {expectedName}; refusing to delete it.");
+        if (guid!.Equals(active, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"Cannot delete active managed power plan {guid}.");
+        Run("/delete", guid);
+        if (Exists(guid)) throw new InvalidOperationException($"Managed power plan {guid} was not deleted.");
+        return null;
+    }
+
+    private string Run(params string[] arguments) => run(arguments);
+
+    private void SetPair(string plan, string subgroup, string setting, int value)
+    {
+        try
+        {
+            Run("/setacvalueindex", plan, subgroup, setting, value.ToString());
+            Run("/setdcvalueindex", plan, subgroup, setting, value.ToString());
+        }
+        catch { }
+    }
 
     private static string ParseGuid(string text)
     {

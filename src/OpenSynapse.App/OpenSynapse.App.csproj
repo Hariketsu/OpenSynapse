@@ -2,6 +2,7 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
+    <ApplicationIcon>Assets\OpenSynapse.App.ico</ApplicationIcon>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -10,5 +11,10 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\OpenSynapse.Core\OpenSynapse.Core.csproj" />
+    <Resource Include="Assets\OpenSynapse.App.ico" />
+    <Content Include="Assets\OpenSynapse.Tray.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 </Project>

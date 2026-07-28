@@ -1,78 +1,80 @@
 # OpenSynapse architecture
 
-## Goals
+## Release runtime
 
-OpenSynapse keeps privileged work small, visible, and reversible. Device support is explicit: a product is supported only when its identity, transport, commands, and verification evidence are known.
+OpenSynapse 2.4.2 uses the PowerPilot 2.4.1 execution model because that model has already passed the target-machine installation, power-policy, display, DPI and stability test suite.
+
+```mermaid
+flowchart TD
+    Task["Per-user scheduled task\nhighest privileges, STA, delayed logon start"]
+    Script["OpenSynapse.ps1\nWinForms UI, tray and automation loop"]
+    Native["OpenSynapse.Native.cs\ndynamically compiled native helpers"]
+    Config["%LOCALAPPDATA%\\OpenSynapse\nconfig, state, runtime, log and telemetry"]
+    Windows["Windows APIs and powercfg"]
+    Supply["Power status and cached read-only NVIDIA evidence"]
+    Display["DisplayConfig, brightness, HDR and scaling"]
+    HID["DeathAdder V3 Pro HID feature reports"]
+
+    Task --> Script
+    Script --> Config
+    Script --> Windows
+    Script --> Supply
+    Script --> Native
+    Native --> Display
+    Native --> HID
+```
+
+The UI and policy engine live in the same elevated per-user process. There is no WPF-to-Agent named pipe, no second startup authority and no period where the panel can be open while its backend is offline. Closing the window hides it; the tray process and automation loop continue. “Exit and restore” returns tracked power, display, wake and service state before stopping.
 
 ## Components
 
-```mermaid
-flowchart LR
-    UI["OpenSynapse.App\nWPF UI and tray"]
-    Core["OpenSynapse.Core\nrequests, status, policy and protocol"]
-    Agent["OpenSynapse.Agent\nelevated policy and HID owner"]
-    State["%LOCALAPPDATA%\\OpenSynapse\nversionless experimental state"]
-    Windows["Windows APIs and powercfg"]
-    HID["Supported Razer HID control interface"]
+### OpenSynapse.ps1
 
-    UI --> Core
-    UI -- "current-user named pipe" --> Agent
-    Agent --> Core
-    Agent --> State
-    Agent --> Windows
-    Agent --> HID
-```
+The script is the product entry point and owns:
 
-### OpenSynapse.App
+- installation, upgrade migration, uninstallation and the Start menu shortcut;
+- the delayed highest-privilege scheduled task;
+- Auto, Hyper, Balance and Quiet selection;
+- supply classification, debounce and Smart Auto hysteresis;
+- application rules, temporary modes and runtime health backoff;
+- reversible power, brightness, HDR, scaling, refresh, wake-device and maintenance state;
+- the five-page WinForms UI, custom title bar, tray menu, diagnostics and exports;
+- calls into the native display, telemetry and Razer HID helpers.
 
-Runs without elevation. It displays status and sends typed requests to the agent. Closing the window hides it; explicit exit requests restoration and agent shutdown. It never writes Windows policy or HID state directly.
+Installation stops the obsolete `OpenSynapse Agent` runtime before removing it. When its executable is still present, `uninstall-cleanup` performs the original implementation's verified rollback. If only its schema-10 JSON remains, the PowerShell installer recognizes that distinct schema, directly restores the captured power/display/brightness/wake state, maps user configuration into the 2.4.1-compatible fields, and archives the legacy JSON so it cannot later be mistaken for a PowerShell runtime backup. An installed PowerPilot instance is then handed to its own restore/uninstall path; its config and state are archived first and its compatible config is promoted to OpenSynapse. Only after both prior policy engines have stopped are their old tasks/directories removed and the single OpenSynapse runtime registered.
 
-### OpenSynapse.Agent
+### OpenSynapse.Native.cs
 
-Runs elevated for the current user. It owns mode selection, power-source reactions, state capture, restoration, Windows policy changes, device enumeration, and HID commands. The named pipe accepts only the current user and one bounded JSON request per connection.
+Windows PowerShell 5.1 dynamically compiles this helper with `Add-Type`. It contains the native API boundaries used by the script:
 
-### OpenSynapse.Core
+- per-monitor DPI and taskbar AppUserModelID;
+- custom window dragging, dark frames and dark controls;
+- CPU, battery, foreground-window, GPU and power-event telemetry;
+- display mode, native dynamic refresh, scaling and Advanced Color operations;
+- capability-gated DeathAdder V3 Pro HID discovery and feature reports.
 
-Contains shared request/status models, deterministic mode selection, and device packet construction/validation. Logic that can be independent of Windows or hardware belongs here and leaves a runnable test.
+The Razer path accepts only VID `1532`, PIDs `00B6`, `00B7`, `00C2` or `00C3`, and HID Usage Page `0x0C`. DPI is limited to 100–30000; standard-receiver polling is limited to 125, 500 or 1000 Hz. Responses must match the transaction, command class, command ID and checksum.
 
-## State transition
+This is a user-mode HID feature-report implementation. It does not install a kernel driver, flash firmware or access the embedded controller.
 
-```mermaid
-stateDiagram-v2
-    [*] --> Unmanaged
-    Unmanaged --> Captured: first policy application
-    Captured --> Performance: apply Performance
-    Captured --> Quiet: apply Quiet
-    Performance --> Quiet: selection or power source changes
-    Quiet --> Performance: selection or power source changes
-    Performance --> Restoring: restore or shutdown
-    Quiet --> Restoring: restore or shutdown
-    Restoring --> Unmanaged: confirmed restoration
-    Restoring --> Captured: any restoration remains pending
-```
+### Retained .NET code
 
-The Captured State is not deleted merely because a restore was attempted. Each value is cleared only after its restoration is confirmed or it is intentionally retained for a later retry.
+`OpenSynapse.sln`, `OpenSynapse.Core`, the former WPF App and the former Agent remain in the repository for protocol regression tests and migration history. They are not copied by `scripts/Publish-OpenSynapse.ps1` and are not the installed desktop runtime.
 
-## Trust boundaries
+## State and recovery
 
-- The UI-to-agent pipe crosses a Windows integrity boundary. Access is restricted to the current user; JSON enums, sizes, ranges, operations, and device identities are validated.
-- The state file is current-user writable and is not a source of arbitrary executable commands or file paths.
-- HID writes require Razer VID `1532`, an explicitly supported PID, and Consumer usage page `0x0C`.
-- Unknown status, response mismatch, checksum failure, and unsupported values fail closed.
-- Firmware and embedded-controller writes are outside the boundary.
+Configuration and rollback state are separate under `%LOCALAPPDATA%\OpenSynapse`:
 
-## Adding device support
+- `config.json` contains the persistent user selection and policy settings;
+- `state.json` contains original and managed power-plan identities plus reversible wake, service, brightness and color state;
+- `runtime.json` identifies the live tray process and health;
+- `OpenSynapse.log` records bounded local events;
+- `telemetry.jsonl` stores the rotating local telemetry history.
 
-1. Record exact VID/PID, transport role, usage page, firmware, and connection type.
-2. Establish legally shareable protocol provenance.
-3. Implement pure packet construction and response validation in Core.
-4. Add the smallest packet-level regression check.
-5. Gate transport access on the exact capability identity.
-6. Verify reads, writes, failure behavior, and rollback on owned or authorized hardware.
-7. Update the public device matrix with the verified combination.
+The runtime retains PowerPilot 2.4.1's atomic JSON replacement and `.bak` recovery behavior. A transient monitor failure does not switch profiles blindly: the last verified plan is preserved and monitoring backs off through 10/20/40/60-second retries.
 
-The current DeathAdder path remains direct. A general provider or plugin abstraction should be introduced only when a second maintained driver demonstrates a real common interface.
+## Test boundary
 
-## Prototype boundary
+`scripts/Test-Milestones.ps1` runs the non-destructive definition and telemetry suite. `-AdminRelease` runs the inherited reversible administrator suite, including installation and power-plan round trips. `-TestMouseWrites` writes the mouse's currently reported DPI and polling values back to the same supported device.
 
-The native display helper migrated from PowerPilot now lives under `src/OpenSynapse.Agent/Windows/`. Prototype and protocol references under ignored `ref/` are evidence only and must never be build dependencies.
+Packet construction is testable without hardware. A hardware support claim still requires a connected target device and successful read/write verification.
