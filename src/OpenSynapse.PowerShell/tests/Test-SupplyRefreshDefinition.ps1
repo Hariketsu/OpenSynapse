@@ -84,17 +84,19 @@ foreach ($method in @('ApplyFixedRefresh', 'GetSupportedRefreshRates')) {
     if ($method -notin $nativeMethods) { throw "Missing native refresh method: $method" }
 }
 $dynamicMethods = [OpenSynapseNative.DynamicRefreshManager].GetMethods().Name
-foreach ($method in @('GetStatus', 'ValidateNativeDynamic', 'EnableNativeDynamic', 'Disable', 'ApplyExternalMaximumRefresh', 'ApplyInternalFixedRefresh', 'ApplyProfileRefresh')) {
+foreach ($method in @('GetStatus', 'GetStatuses', 'RestoreStatus', 'ValidateNativeDynamic', 'EnableNativeDynamic', 'Disable', 'ApplyExternalMaximumRefresh', 'ApplyInternalFixedRefresh', 'ApplyProfileRefresh')) {
     if ($method -notin $dynamicMethods) { throw "Missing dynamic refresh method: $method" }
 }
 $dynamicStatus = [OpenSynapseNative.DynamicRefreshManager]::GetStatus()
 
 $mainSource = Get-Content -Raw -LiteralPath $mainScript
 foreach ($required in @(
-    "`$script:AppVersion = '2.4.6'",
+    "`$script:AppVersion = '2.5.0'",
     "New-CustomPlan 'OpenSynapse Balance'",
     'Set-ProfilePolicy Balance $balanceGuid',
-    "@('HyperPlanGuid', 'BalancePlanGuid', 'QuietPlanGuid')",
+    "New-CustomPlan 'OpenSynapse Experiment'",
+    'Set-ProfilePolicy Experiment $experimentGuid',
+    "@('HyperPlanGuid', 'BalancePlanGuid', 'QuietPlanGuid', 'ExperimentPlanGuid')",
     "'Fixed60' { [OpenSynapseNative.DynamicRefreshManager]::ApplyProfileRefresh(60); break }",
     "'Fixed240' { [OpenSynapseNative.DynamicRefreshManager]::ApplyProfileRefresh(240); break }",
     'ApplyExternalMaximumRefresh()'

@@ -1,15 +1,16 @@
-# OpenSynapse 2.4.6
+# OpenSynapse 2.5.0
 
 OpenSynapse 是基于 PowerPilot 2.4.1 重新移植的 Windows 电源、显示与 Razer HID 控制程序。发布版保留原型已验证的单进程 PowerShell 5.1/WinForms 架构，并将产品名、任务、目录、快捷方式和 AppUserModelID 全部更名为 OpenSynapse。
 
 ## 功能
 
-- Auto、Hyper、Balance、Eco 电源模式（兼容配置内部仍使用 `Quiet` 枚举）；
+- Auto、Hyper、Balance、Eco 与锁定式 Experiment 电源模式（兼容配置内部仍使用 `Quiet` 枚举）；
 - 280W 高功率 AC、USB-C PD、电池和未知 AC 分类；
 - CPU/GPU、前台/全屏应用、应用规则与迟滞驱动的 Smart Auto；
 - 临时模式、Eco 后台维护与唤醒设备管理；
-- HDR、亮度、显示缩放和供电感知内屏 Auto 刷新率（离电/PD 动态 60–240 Hz、280W 固定 240 Hz、手动 Eco 60 Hz/固定 240 Hz）；
-- 电池、GPU、dGPU 活动、离电高耗电进程提示、运行健康与诊断导出；
+- HDR、逐屏 WMI/DDC 亮度、ICC、显示缩放和供电感知内屏 Auto 刷新率（离电/PD 动态 60–240 Hz、280W 固定 240 Hz、手动 Eco 60 Hz/固定 240 Hz）；
+- 电池、GPU/NPU 可用性、温度/节流、屏幕状态、dGPU 活动、离电高耗电进程提示、运行健康与诊断导出；
+- Experiment 环境锁、漂移修复及 JSON/HTML/SHA-256 实验报告；
 - 五页深色 UI、自绘可拖动标题栏、托盘与开始菜单快捷方式；
 - DeathAdder V3 Pro 状态、DPI 与标准接收器轮询率控制。
 
@@ -70,10 +71,11 @@ powershell -ExecutionPolicy Bypass -File .\OpenSynapse.ps1 -Mode Open
 - 运行记录：`%LOCALAPPDATA%\OpenSynapse\runtime.json`
 - 日志：`%LOCALAPPDATA%\OpenSynapse\OpenSynapse.log`
 - 遥测历史：`%LOCALAPPDATA%\OpenSynapse\telemetry.jsonl`
+- 实验环境报告：`%LOCALAPPDATA%\OpenSynapse\experiment-reports`
 
 配置和状态采用原子替换并保留备份。旧 .NET schema-10 文件和 PowerPilot 接管记录会以独立迁移文件归档，避免被新运行时误读。
 
-遥测历史 schema 5 包含实际档位 `ActiveProfile`、剩余容量 `BatteryRemainingMwh`、电池电压 `BatteryVoltageMv`、平滑续航估算 `EstimatedHours`，以及 `AdapterLimitW`、`RawSupplyType`、`SupplyConfirmationPending`、分类器/应用版本、刷新策略、GPU 样本序号/年龄、主循环周期和离电高耗电进程证据。新增字段不增加硬件或 GPU 轮询。
+遥测历史 schema 6 包含实际档位 `ActiveProfile`、剩余容量 `BatteryRemainingMwh`、电池电压 `BatteryVoltageMv`、平滑续航估算 `EstimatedHours`，以及 GPU/NPU 可用性、温度/节流、逐屏模式/ICC/HDR/DRR/缩放/亮度、刷新策略、主循环周期和离电高耗电进程证据。离电硬件与显示状态最多每 60 秒采样一次，闲置 dGPU 不会被自动实验报告唤醒。
 
 供电分类只有在读数不高于 85 W 时才视为强 PD 证据，并从任意启动档位统一经过 30 秒预热和三次间隔采样；一次不低于 130 W 的读数仍会立即确认 280W 级适配器。外屏默认保持当前分辨率支持的最高刷新率；内屏 Auto 在离电/PD/未确认 AC 使用原生 60–240 Hz 动态刷新，确认 280W 后固定 240 Hz。手动固定 60/240 Hz 在新接入外部供电时恢复 Auto；动态刷新应用或回读验证失败时，内屏安全回退到 Eco 60 Hz。
 

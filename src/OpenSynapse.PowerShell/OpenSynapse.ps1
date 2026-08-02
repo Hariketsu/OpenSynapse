@@ -3,7 +3,7 @@ param(
     [ValidateSet('Run', 'Open', 'Install', 'Uninstall', 'Status', 'Apply', 'SelfTest')]
     [string]$Mode = 'Run',
 
-    [ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet')]
+    [ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet', 'Experiment')]
     [string]$Profile = 'Auto',
 
     [string]$CaptureUiPath = '',
@@ -16,7 +16,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $script:AppName = 'OpenSynapse'
-$script:AppVersion = '2.4.6'
+$script:AppVersion = '2.5.0'
 $script:AppUserModelId = 'OpenSynapse.Desktop'
 $script:TaskName = 'OpenSynapse'
 $script:LegacyAgentTaskName = 'OpenSynapse Agent'
@@ -44,7 +44,8 @@ $script:RuntimePath = Join-Path $script:DataDir 'runtime.json'
 $script:ShowRequestPath = Join-Path $script:DataDir 'show.request'
 $script:LogPath = Join-Path $script:DataDir 'OpenSynapse.log'
 $script:TelemetryPath = Join-Path $script:DataDir 'telemetry.jsonl'
-$script:TelemetrySchemaVersion = 5
+$script:ExperimentReportDir = Join-Path $script:DataDir 'experiment-reports'
+$script:TelemetrySchemaVersion = 6
 $script:SupplyClassifierVersion = 2
 $script:ShortcutPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\OpenSynapse.lnk'
 $script:LegacyDotNetConfigDetected = $false
@@ -72,6 +73,17 @@ $script:SupplyStabilizerStartedAt = Get-Date
 $script:NextAdapterConfirmationProbe = [DateTime]::MaxValue
 $script:LastDynamicRefreshDeferredLog = [DateTime]::MinValue
 $script:LastGpuTelemetryIntervalMs = 0
+$script:LastHardwareTelemetry = $null
+$script:LastHardwareTelemetryAt = [DateTime]::MinValue
+$script:LastNvidiaHardwareSnapshot = $null
+$script:LastNvidiaHardwareSnapshotAt = [DateTime]::MinValue
+$script:LastDisplayTelemetry = $null
+$script:LastDisplayTelemetryAt = [DateTime]::MinValue
+$script:LastExperimentVerificationAt = [DateTime]::MinValue
+$script:LastPolicyVerification = [pscustomobject][ordered]@{
+    Profile = ''; PlanVerified = $false; RefreshPolicy = ''; EffectiveRefreshPolicy = ''
+    RefreshVerified = $null; RefreshWarning = ''; VerifiedAtUtc = ''
+}
 $script:LastAppliedQuietCpuMax = $null
 $script:LastAppliedHyperCpuPolicy = $null
 $script:BatteryPowerSamples = New-Object Collections.Generic.List[object]
@@ -331,7 +343,7 @@ function Set-PlanPair {
 }
 
 function Set-ProfilePolicy {
-    param([ValidateSet('Hyper', 'Balance', 'Quiet')][string]$Name, [string]$PlanGuid)
+    param([ValidateSet('Hyper', 'Balance', 'Quiet', 'Experiment')][string]$Name, [string]$PlanGuid)
 
     if ($Name -eq 'Hyper') {
         Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.ProcessorMinimum 5 5
@@ -361,7 +373,7 @@ function Set-ProfilePolicy {
         Set-PlanPair $PlanGuid $script:Guids.Sleep $script:Guids.HibernateIdle 0 3600
         Set-PlanPair $PlanGuid $script:Guids.Buttons $script:Guids.LidAction 1 1
     }
-    elseif ($Name -eq 'Balance') {
+    elseif ($Name -in @('Balance', 'Experiment')) {
         Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.ProcessorMinimum 5 5
         Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.ProcessorMaximum 100 100
         Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.ProcessorEpp 50 70 -Optional
@@ -375,6 +387,15 @@ function Set-ProfilePolicy {
         Set-PlanPair $PlanGuid $script:Guids.Sleep $script:Guids.StandbyIdle 900 600
         Set-PlanPair $PlanGuid $script:Guids.Sleep $script:Guids.HibernateIdle 3600 1800
         Set-PlanPair $PlanGuid $script:Guids.Buttons $script:Guids.LidAction 1 2
+        if ($Name -eq 'Experiment') {
+            # Prevent an unattended research session from changing display or sleep state.
+            # CPU behavior stays close to Balance to avoid heat-driven timing drift.
+            Set-PlanPair $PlanGuid $script:Guids.Display $script:Guids.DisplayTimeout 0 0
+            Set-PlanPair $PlanGuid $script:Guids.Sleep $script:Guids.StandbyIdle 0 0
+            Set-PlanPair $PlanGuid $script:Guids.Sleep $script:Guids.HibernateIdle 0 0
+            Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.ProcessorEpp 40 60 -Optional
+            Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.CoolingPolicy 1 1 -Optional
+        }
     }
     else {
         Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.ProcessorMinimum 5 5
@@ -417,7 +438,7 @@ function Get-DefaultConfig {
         }
     )
     return [pscustomobject][ordered]@{
-        Version = 13
+        Version = 14
         Selection = 'Auto'
         SmartAutomationEnabled = $true
         SmartHighPowerCpuEnter = 45
@@ -479,6 +500,9 @@ function Get-DefaultConfig {
         ManageRefreshRate = $true
         QuietRefreshRate = 60
         RefreshPolicy = 'Auto'
+        ExperimentRefreshRate = 240
+        ExperimentVerificationSeconds = 15
+        ExperimentAutoReport = $true
         ManageAdvancedColor = $true
         ManageBrightness = $true
         QuietBrightness = 40
@@ -595,6 +619,7 @@ function Convert-LegacyDotNetConfig {
             'Hyper' { 'Hyper'; break }
             'Balance' { 'Balance'; break }
             'Quiet' { 'Quiet'; break }
+            'Experiment' { 'Experiment'; break }
             default { 'Auto' }
         }
     }
@@ -681,7 +706,7 @@ function Get-AppConfig {
     if ($oldVersion -lt 3) {
         $config.RefreshPolicy = if ([bool]$config.ManageRefreshRate) { 'Auto' } else { 'Unmanaged' }
     }
-    if ([string]$config.Selection -notin @('Auto', 'Hyper', 'Balance', 'Quiet')) { $config.Selection = 'Auto' }
+    if ([string]$config.Selection -notin @('Auto', 'Hyper', 'Balance', 'Quiet', 'Experiment')) { $config.Selection = 'Auto' }
     if ([string]$config.HyperCpuPolicy -notin @('Sustained', 'Latency')) { $config.HyperCpuPolicy = 'Sustained' }
     if ($oldVersion -lt 12 -and [string]$config.RefreshPolicy -in @('FollowProfile', 'FollowMode', 'Fixed120', 'DynamicNative', 'Dynamic60To120')) {
         $config.RefreshPolicy = 'Auto'
@@ -690,6 +715,11 @@ function Get-AppConfig {
         $config.RefreshPolicy = 'Auto'
     }
     $config.ManageRefreshRate = ([string]$config.RefreshPolicy -ne 'Unmanaged')
+    $config.ExperimentRefreshRate = if ([int]$config.ExperimentRefreshRate -in @(60, 120, 240)) {
+        [int]$config.ExperimentRefreshRate
+    }
+    else { 240 }
+    $config.ExperimentVerificationSeconds = [Math]::Max(5, [Math]::Min(120, [int]$config.ExperimentVerificationSeconds))
     if ($oldVersion -lt 5 -and [int]$config.ProcessMaintenanceSeconds -eq 30) {
         $config.ProcessMaintenanceSeconds = 180
     }
@@ -780,7 +810,7 @@ function Get-AppConfig {
         })
     }
     $config.ApplicationRules = $normalizedRules.ToArray()
-    $config.Version = 13
+    $config.Version = 14
     return $config
 }
 
@@ -797,8 +827,11 @@ function Get-AppState {
     Add-DefaultProperty $state 'AdvancedColorStates' @()
     Add-DefaultProperty $state 'CapturedBrightness' $null
     Add-DefaultProperty $state 'BalancePlanGuid' ''
-    Add-DefaultProperty $state 'Version' 10
-    $state.Version = 10
+    Add-DefaultProperty $state 'ExperimentPlanGuid' ''
+    Add-DefaultProperty $state 'DisplayStateSnapshot' $null
+    Add-DefaultProperty $state 'ExperimentSession' $null
+    Add-DefaultProperty $state 'Version' 11
+    $state.Version = 11
 
     $wakeDevices = @()
     foreach ($item in @($state.DisabledWakeDevices)) {
@@ -1187,6 +1220,7 @@ function Get-DesiredProfile {
         [AllowNull()][object]$AutomationState = $null,
         [string]$TemporaryProfile = ''
     )
+    if ($Selection -eq 'Experiment') { return 'Experiment' }
     if ($TemporaryProfile -in @('Hyper', 'Balance', 'Quiet')) { return $TemporaryProfile }
     if ($Selection -in @('Hyper', 'Balance', 'Quiet')) { return $Selection }
     if ($null -ne $Config -and [bool]$Config.SmartAutomationEnabled) {
@@ -1202,7 +1236,7 @@ function Get-DesiredProfile {
 
 function Resolve-SelectionAfterSupplyTransition {
     param(
-        [ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet')][string]$Selection,
+        [ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet', 'Experiment')][string]$Selection,
         [AllowEmptyString()][string]$PreviousSupplyType,
         [AllowEmptyString()][string]$CurrentSupplyType
     )
@@ -1246,7 +1280,7 @@ function Resolve-GpuTelemetryIntervalMilliseconds {
     param(
         [object]$Config,
         [object]$Snapshot,
-        [ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet')][string]$Selection
+        [ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet', 'Experiment')][string]$Selection
     )
     $seconds = if ($Selection -eq 'Quiet') {
         [int]$Config.GpuTelemetryManualQuietIntervalSeconds
@@ -1264,7 +1298,7 @@ function Update-GpuTelemetryCadence {
     param(
         [object]$Config,
         [object]$Snapshot,
-        [ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet')][string]$Selection
+        [ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet', 'Experiment')][string]$Selection
     )
     $interval = Resolve-GpuTelemetryIntervalMilliseconds $Config $Snapshot $Selection
     if ($interval -ne [int]$script:LastGpuTelemetryIntervalMs) {
@@ -1279,7 +1313,7 @@ function Resolve-MonitorIntervalMilliseconds {
     param(
         [AllowNull()][object]$Snapshot,
         [AllowNull()][object]$AutomationState,
-        [ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet')][string]$Selection = 'Auto'
+        [ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet', 'Experiment')][string]$Selection = 'Auto'
     )
     if ($null -eq $Snapshot -or [string]$Snapshot.Source -ne 'Battery') { return 5000 }
     if ($Selection -eq 'Quiet' -or ($null -ne $AutomationState -and [bool]$AutomationState.SessionLocked)) { return 15000 }
@@ -1292,7 +1326,7 @@ function Resolve-MonitorIntervalMilliseconds {
 
 function New-SmartAutomationState {
     param([string]$InitialProfile = '')
-    if ($InitialProfile -notin @('Hyper', 'Balance', 'Quiet')) { $InitialProfile = '' }
+    if ($InitialProfile -notin @('Hyper', 'Balance', 'Quiet', 'Experiment')) { $InitialProfile = '' }
     return [pscustomobject]@{
         CurrentProfile = $InitialProfile
         CandidateProfile = ''
@@ -1820,12 +1854,12 @@ function Update-ManualTelemetryState {
         [object]$Config,
         [object]$Snapshot,
         [object]$AutomationState,
-        [ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet')][string]$Selection,
+        [ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet', 'Experiment')][string]$Selection,
         [AllowNull()][object]$Telemetry = $null
     )
     if ($null -eq $Telemetry) { $Telemetry = Get-SmartAutomationTelemetry $Config }
     $sessionLocked = $null -ne $Telemetry.PSObject.Properties['SessionLocked'] -and [bool]$Telemetry.SessionLocked
-    if ($Selection -in @('Hyper', 'Balance', 'Quiet')) { $AutomationState.CurrentProfile = $Selection }
+    if ($Selection -in @('Hyper', 'Balance', 'Quiet', 'Experiment')) { $AutomationState.CurrentProfile = $Selection }
     $AutomationState.CandidateProfile = ''
     $AutomationState.CandidateSamples = 0
     $AutomationState.LastSupplyType = [string]$Snapshot.SupplyType
@@ -1988,7 +2022,8 @@ function Get-InstalledState {
     if ($null -eq $state) { throw 'OpenSynapse is not installed.' }
     if (-not (Test-PlanExists ([string]$state.HyperPlanGuid)) -or
         -not (Test-PlanExists ([string]$state.BalancePlanGuid)) -or
-        -not (Test-PlanExists ([string]$state.QuietPlanGuid))) {
+        -not (Test-PlanExists ([string]$state.QuietPlanGuid)) -or
+        -not (Test-PlanExists ([string]$state.ExperimentPlanGuid))) {
         throw 'OpenSynapse plans are missing. Run the installer to repair them.'
     }
     return $state
@@ -2149,6 +2184,13 @@ function Repair-DisplayScaling {
         }
         catch { Write-AppLog "Scale repair failed for $($display.Key): $($_.Exception.Message)" }
     }
+    $verification = @([OpenSynapseNative.DisplayScaling]::GetActiveDisplays())
+    foreach ($display in $verification) {
+        $target = if ($display.IsInternal) { [int]$Config.InternalScale } else { [int]$Config.ExternalScale }
+        if ([int]$display.CurrentPercent -ne $target) {
+            throw "Display scaling verification failed for $($display.GdiDeviceName): expected $target%, actual $($display.CurrentPercent)%."
+        }
+    }
     return $changed
 }
 
@@ -2177,6 +2219,366 @@ function Set-InternalBrightness {
     }
 }
 
+function Get-MonitorBrightnessStates {
+    $result = New-Object Collections.Generic.List[object]
+    try {
+        foreach ($item in @(Get-WmiObject -Namespace root\wmi -Class WmiMonitorBrightness -ErrorAction Stop)) {
+            $result.Add([pscustomobject][ordered]@{
+                InstanceName = [string]$item.InstanceName
+                CurrentPercent = [int]$item.CurrentBrightness
+                Supported = $true
+            })
+        }
+    }
+    catch { Write-AppLog "Per-monitor brightness read unavailable: $($_.Exception.Message)" }
+    return $result.ToArray()
+}
+
+function Restore-MonitorBrightnessStates {
+    param([AllowNull()][object[]]$BrightnessStates)
+    $changes = 0
+    $warnings = New-Object Collections.Generic.List[string]
+    $methods = @()
+    try { $methods = @(Get-WmiObject -Namespace root\wmi -Class WmiMonitorBrightnessMethods -ErrorAction Stop) }
+    catch {
+        if (@($BrightnessStates).Count -gt 0) { $warnings.Add("Brightness methods unavailable: $($_.Exception.Message)") }
+        return [pscustomobject]@{ Changes = 0; Warnings = $warnings.ToArray() }
+    }
+    foreach ($captured in @($BrightnessStates)) {
+        $method = @($methods | Where-Object { [string]$_.InstanceName -eq [string]$captured.InstanceName }) | Select-Object -First 1
+        if ($null -eq $method) {
+            $warnings.Add("Brightness target is no longer active: $($captured.InstanceName)")
+            continue
+        }
+        try {
+            $current = @(Get-WmiObject -Namespace root\wmi -Class WmiMonitorBrightness -ErrorAction Stop |
+                Where-Object { [string]$_.InstanceName -eq [string]$captured.InstanceName }) | Select-Object -First 1
+            if ($null -eq $current -or [int]$current.CurrentBrightness -ne [int]$captured.CurrentPercent) {
+                $null = $method.WmiSetBrightness(1, [byte]$captured.CurrentPercent)
+                $changes++
+            }
+        }
+        catch { $warnings.Add("Brightness restore failed for $($captured.InstanceName): $($_.Exception.Message)") }
+    }
+    return [pscustomobject]@{ Changes = $changes; Warnings = $warnings.ToArray() }
+}
+
+function Get-DisplayStateSnapshot {
+    $modes = @([OpenSynapseNative.DisplayModeManager]::GetActiveDisplays() | ForEach-Object {
+        [pscustomobject][ordered]@{
+            DeviceName = [string]$_.DeviceName
+            FriendlyName = [string]$_.FriendlyName
+            DeviceId = [string]$_.DeviceId
+            DeviceKey = [string]$_.DeviceKey
+            MonitorName = [string]$_.MonitorName
+            MonitorDeviceId = [string]$_.MonitorDeviceId
+            MonitorDeviceKey = [string]$_.MonitorDeviceKey
+            Width = [int]$_.Width
+            Height = [int]$_.Height
+            BitsPerPixel = [int]$_.BitsPerPixel
+            Frequency = [int]$_.Frequency
+            PositionX = [int]$_.PositionX
+            PositionY = [int]$_.PositionY
+            Orientation = [int]$_.Orientation
+            IsPrimary = [bool]$_.IsPrimary
+        }
+    })
+    $scaling = @([OpenSynapseNative.DisplayScaling]::GetActiveDisplays() | ForEach-Object {
+        [pscustomobject][ordered]@{
+            Key = [string]$_.Key
+            GdiDeviceName = [string]$_.GdiDeviceName
+            IsInternal = [bool]$_.IsInternal
+            CurrentPercent = [int]$_.CurrentPercent
+            RecommendedPercent = [int]$_.RecommendedPercent
+        }
+    })
+    $drr = @([OpenSynapseNative.DynamicRefreshManager]::GetStatuses() | ForEach-Object {
+        [pscustomobject][ordered]@{
+            Key = [string]$_.Key
+            GdiDeviceName = [string]$_.GdiDeviceName
+            IsInternal = [bool]$_.IsInternal
+            Supported = [bool]$_.Supported
+            Enabled = [bool]$_.Enabled
+            BaseFrequency = [int]$_.BaseFrequency
+            BoostFrequency = [int]$_.BoostFrequency
+        }
+    })
+    $colors = @([OpenSynapseNative.AdvancedColorManager]::GetStatus() | ForEach-Object {
+        [pscustomobject][ordered]@{
+            Key = [string]$_.Key
+            GdiDeviceName = [string]$_.GdiDeviceName
+            Supported = [bool]$_.Supported
+            Enabled = [bool]$_.Enabled
+            BitsPerColorChannel = [uint32]$_.BitsPerColorChannel
+        }
+    })
+    $profiles = @([OpenSynapseNative.ColorProfileManager]::GetStatus() | ForEach-Object {
+        $profilePath = [string]$_.ProfilePath
+        $profileHash = ''
+        if ([bool]$_.Available -and (Test-Path -LiteralPath $profilePath)) {
+            try { $profileHash = [string](Get-FileHash -LiteralPath $profilePath -Algorithm SHA256 -ErrorAction Stop).Hash }
+            catch { $profileHash = '' }
+        }
+        [pscustomobject][ordered]@{
+            GdiDeviceName = [string]$_.GdiDeviceName
+            Available = [bool]$_.Available
+            ProfilePath = $profilePath
+            ProfileSha256 = $profileHash
+            Error = [string]$_.Error
+        }
+    })
+    $physicalBrightness = @()
+    try {
+        $physicalBrightness = @([OpenSynapseNative.PhysicalMonitorBrightnessManager]::GetStatus() | ForEach-Object {
+            [pscustomobject][ordered]@{
+                GdiDeviceName = [string]$_.GdiDeviceName
+                PhysicalIndex = [int]$_.PhysicalIndex
+                Description = [string]$_.Description
+                Supported = [bool]$_.Supported
+                Minimum = [uint32]$_.Minimum
+                Current = [uint32]$_.Current
+                Maximum = [uint32]$_.Maximum
+                CurrentPercent = [int]$_.CurrentPercent
+                Error = [string]$_.Error
+            }
+        })
+    }
+    catch { $physicalBrightness = @([pscustomobject]@{ GdiDeviceName = ''; PhysicalIndex = -1; Description = ''; Supported = $false; Minimum = 0; Current = 0; Maximum = 0; CurrentPercent = 0; Error = $_.Exception.Message }) }
+    return [pscustomobject][ordered]@{
+        Version = 2
+        CapturedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+        Modes = $modes
+        Scaling = $scaling
+        DynamicRefresh = $drr
+        AdvancedColor = $colors
+        ColorProfiles = $profiles
+        Brightness = @(Get-MonitorBrightnessStates)
+        PhysicalBrightness = $physicalBrightness
+    }
+}
+
+function Compare-DisplayStateSnapshot {
+    param([object]$ExpectedSnapshot, [AllowNull()][object]$ActualSnapshot = $null)
+    if ($null -eq $ActualSnapshot) { $ActualSnapshot = Get-DisplayStateSnapshot }
+    $differences = New-Object Collections.Generic.List[string]
+
+    foreach ($expectedMode in @($ExpectedSnapshot.Modes)) {
+        $hasStableMonitorKey = $null -ne $expectedMode.PSObject.Properties['MonitorDeviceKey'] -and
+            -not [string]::IsNullOrWhiteSpace([string]$expectedMode.MonitorDeviceKey)
+        $currentMode = @($ActualSnapshot.Modes | Where-Object {
+            ($hasStableMonitorKey -and [string]$_.MonitorDeviceKey -eq [string]$expectedMode.MonitorDeviceKey) -or
+            (-not $hasStableMonitorKey -and [string]$_.DeviceName -eq [string]$expectedMode.DeviceName)
+        }) | Select-Object -First 1
+        if ($null -eq $currentMode) { $differences.Add("Display missing: $($expectedMode.DeviceName)"); continue }
+        if ([int]$currentMode.Width -ne [int]$expectedMode.Width -or [int]$currentMode.Height -ne [int]$expectedMode.Height -or
+            [int]$currentMode.BitsPerPixel -ne [int]$expectedMode.BitsPerPixel -or
+            [Math]::Abs([int]$currentMode.Frequency - [int]$expectedMode.Frequency) -gt 1 -or
+            [int]$currentMode.PositionX -ne [int]$expectedMode.PositionX -or [int]$currentMode.PositionY -ne [int]$expectedMode.PositionY -or
+            [int]$currentMode.Orientation -ne [int]$expectedMode.Orientation) {
+            $differences.Add("Mode differs on $($expectedMode.DeviceName): expected $($expectedMode.Width)x$($expectedMode.Height)@$($expectedMode.Frequency), actual $($currentMode.Width)x$($currentMode.Height)@$($currentMode.Frequency)")
+        }
+    }
+    foreach ($actualMode in @($ActualSnapshot.Modes)) {
+        $hasStableMonitorKey = $null -ne $actualMode.PSObject.Properties['MonitorDeviceKey'] -and
+            -not [string]::IsNullOrWhiteSpace([string]$actualMode.MonitorDeviceKey)
+        if (@($ExpectedSnapshot.Modes | Where-Object {
+            ($hasStableMonitorKey -and $null -ne $_.PSObject.Properties['MonitorDeviceKey'] -and
+                [string]$_.MonitorDeviceKey -eq [string]$actualMode.MonitorDeviceKey) -or
+            (-not $hasStableMonitorKey -and [string]$_.DeviceName -eq [string]$actualMode.DeviceName)
+        }).Count -eq 0) {
+            $differences.Add("Unexpected display became active: $($actualMode.DeviceName)")
+        }
+    }
+    foreach ($expectedScale in @($ExpectedSnapshot.Scaling)) {
+        $currentScale = @($ActualSnapshot.Scaling | Where-Object {
+            [string]$_.GdiDeviceName -eq [string]$expectedScale.GdiDeviceName -or [string]$_.Key -eq [string]$expectedScale.Key
+        }) | Select-Object -First 1
+        if ($null -eq $currentScale) { $differences.Add("Scaling path missing: $($expectedScale.GdiDeviceName)") }
+        elseif ([int]$currentScale.CurrentPercent -ne [int]$expectedScale.CurrentPercent) {
+            $differences.Add("Scaling differs on $($expectedScale.GdiDeviceName): expected $($expectedScale.CurrentPercent)%, actual $($currentScale.CurrentPercent)%")
+        }
+    }
+    foreach ($expectedDrr in @($ExpectedSnapshot.DynamicRefresh)) {
+        $currentDrr = @($ActualSnapshot.DynamicRefresh | Where-Object {
+            [string]$_.Key -eq [string]$expectedDrr.Key -or [string]$_.GdiDeviceName -eq [string]$expectedDrr.GdiDeviceName
+        }) | Select-Object -First 1
+        if ($null -eq $currentDrr) { $differences.Add("DRR path missing: $($expectedDrr.GdiDeviceName)") }
+        elseif ([bool]$currentDrr.Enabled -ne [bool]$expectedDrr.Enabled -or
+            [Math]::Abs([int]$currentDrr.BaseFrequency - [int]$expectedDrr.BaseFrequency) -gt 1 -or
+            ([bool]$expectedDrr.Enabled -and [Math]::Abs([int]$currentDrr.BoostFrequency - [int]$expectedDrr.BoostFrequency) -gt 1)) {
+            $differences.Add("DRR differs on $($expectedDrr.GdiDeviceName): expected enabled=$($expectedDrr.Enabled) $($expectedDrr.BaseFrequency)-$($expectedDrr.BoostFrequency), actual enabled=$($currentDrr.Enabled) $($currentDrr.BaseFrequency)-$($currentDrr.BoostFrequency)")
+        }
+    }
+    foreach ($expectedColor in @($ExpectedSnapshot.AdvancedColor | Where-Object { [bool]$_.Supported })) {
+        $currentColor = @($ActualSnapshot.AdvancedColor | Where-Object { [string]$_.Key -eq [string]$expectedColor.Key }) | Select-Object -First 1
+        if ($null -eq $currentColor) { $differences.Add("Advanced Color path missing: $($expectedColor.GdiDeviceName)") }
+        elseif ([bool]$currentColor.Enabled -ne [bool]$expectedColor.Enabled) {
+            $differences.Add("Advanced Color differs on $($expectedColor.GdiDeviceName): expected $($expectedColor.Enabled), actual $($currentColor.Enabled)")
+        }
+    }
+    foreach ($expectedProfile in @($ExpectedSnapshot.ColorProfiles | Where-Object { [bool]$_.Available })) {
+        $expectedMode = @($ExpectedSnapshot.Modes | Where-Object { [string]$_.DeviceName -eq [string]$expectedProfile.GdiDeviceName }) | Select-Object -First 1
+        $currentDeviceName = [string]$expectedProfile.GdiDeviceName
+        if ($null -ne $expectedMode -and $null -ne $expectedMode.PSObject.Properties['MonitorDeviceKey'] -and
+            -not [string]::IsNullOrWhiteSpace([string]$expectedMode.MonitorDeviceKey)) {
+            $currentIdentityMode = @($ActualSnapshot.Modes | Where-Object { [string]$_.MonitorDeviceKey -eq [string]$expectedMode.MonitorDeviceKey }) | Select-Object -First 1
+            $currentDeviceName = if ($null -ne $currentIdentityMode) { [string]$currentIdentityMode.DeviceName } else { '' }
+        }
+        $currentProfile = @($ActualSnapshot.ColorProfiles | Where-Object { [string]$_.GdiDeviceName -eq $currentDeviceName }) | Select-Object -First 1
+        if ($null -eq $currentProfile -or -not [bool]$currentProfile.Available) { $differences.Add("ICC profile unavailable: $($expectedProfile.GdiDeviceName)") }
+        elseif (-not [string]::Equals([string]$currentProfile.ProfilePath, [string]$expectedProfile.ProfilePath, [StringComparison]::OrdinalIgnoreCase)) {
+            $differences.Add("ICC profile differs on $($expectedProfile.GdiDeviceName)")
+        }
+        elseif ($null -ne $expectedProfile.PSObject.Properties['ProfileSha256'] -and
+            -not [string]::IsNullOrWhiteSpace([string]$expectedProfile.ProfileSha256) -and
+            -not [string]::Equals([string]$currentProfile.ProfileSha256, [string]$expectedProfile.ProfileSha256, [StringComparison]::OrdinalIgnoreCase)) {
+            $differences.Add("ICC profile file hash differs on $($expectedProfile.GdiDeviceName)")
+        }
+    }
+    foreach ($expectedBrightness in @($ExpectedSnapshot.Brightness)) {
+        $currentBrightness = @($ActualSnapshot.Brightness | Where-Object { [string]$_.InstanceName -eq [string]$expectedBrightness.InstanceName }) | Select-Object -First 1
+        if ($null -eq $currentBrightness) { $differences.Add("Brightness endpoint missing: $($expectedBrightness.InstanceName)") }
+        elseif ([int]$currentBrightness.CurrentPercent -ne [int]$expectedBrightness.CurrentPercent) {
+            $differences.Add("Brightness differs on $($expectedBrightness.InstanceName): expected $($expectedBrightness.CurrentPercent)%, actual $($currentBrightness.CurrentPercent)%")
+        }
+    }
+    if ($null -ne $ExpectedSnapshot.PSObject.Properties['PhysicalBrightness']) {
+        foreach ($expectedBrightness in @($ExpectedSnapshot.PhysicalBrightness | Where-Object { [bool]$_.Supported })) {
+            $expectedMode = @($ExpectedSnapshot.Modes | Where-Object { [string]$_.DeviceName -eq [string]$expectedBrightness.GdiDeviceName }) | Select-Object -First 1
+            $currentDeviceName = [string]$expectedBrightness.GdiDeviceName
+            if ($null -ne $expectedMode -and $null -ne $expectedMode.PSObject.Properties['MonitorDeviceKey'] -and
+                -not [string]::IsNullOrWhiteSpace([string]$expectedMode.MonitorDeviceKey)) {
+                $currentIdentityMode = @($ActualSnapshot.Modes | Where-Object { [string]$_.MonitorDeviceKey -eq [string]$expectedMode.MonitorDeviceKey }) | Select-Object -First 1
+                $currentDeviceName = if ($null -ne $currentIdentityMode) { [string]$currentIdentityMode.DeviceName } else { '' }
+            }
+            $currentBrightness = @($ActualSnapshot.PhysicalBrightness | Where-Object {
+                [string]$_.GdiDeviceName -eq $currentDeviceName -and
+                [int]$_.PhysicalIndex -eq [int]$expectedBrightness.PhysicalIndex
+            }) | Select-Object -First 1
+            if ($null -eq $currentBrightness -or -not [bool]$currentBrightness.Supported) {
+                $differences.Add("DDC/CI brightness endpoint missing: $($expectedBrightness.GdiDeviceName)#$($expectedBrightness.PhysicalIndex)")
+            }
+            elseif ([uint32]$currentBrightness.Current -ne [uint32]$expectedBrightness.Current) {
+                $differences.Add("DDC/CI brightness differs on $($expectedBrightness.GdiDeviceName)#$($expectedBrightness.PhysicalIndex): expected $($expectedBrightness.Current), actual $($currentBrightness.Current)")
+            }
+        }
+    }
+    return [pscustomobject][ordered]@{
+        Valid = $differences.Count -eq 0
+        DifferenceCount = $differences.Count
+        Differences = $differences.ToArray()
+        Actual = $ActualSnapshot
+    }
+}
+
+function Restore-DisplayStateSnapshot {
+    param([object]$Snapshot)
+    $warnings = New-Object Collections.Generic.List[string]
+    $changes = 0
+    if ($null -eq $Snapshot) { return [pscustomobject]@{ Verified = $true; Changes = 0; Warnings = @(); Differences = @() } }
+
+    try { $changes += [int][OpenSynapseNative.DynamicRefreshManager]::Disable() }
+    catch { $warnings.Add("DRR disable before restore failed: $($_.Exception.Message)") }
+    $currentModes = @([OpenSynapseNative.DisplayModeManager]::GetActiveDisplays())
+    foreach ($mode in @($Snapshot.Modes)) {
+        $hasStableMonitorKey = $null -ne $mode.PSObject.Properties['MonitorDeviceKey'] -and
+            -not [string]::IsNullOrWhiteSpace([string]$mode.MonitorDeviceKey)
+        $currentMode = @($currentModes | Where-Object {
+            ($hasStableMonitorKey -and [string]$_.MonitorDeviceKey -eq [string]$mode.MonitorDeviceKey) -or
+            (-not $hasStableMonitorKey -and [string]$_.DeviceName -eq [string]$mode.DeviceName)
+        }) | Select-Object -First 1
+        if ($null -eq $currentMode) { $warnings.Add("Captured physical display is no longer active: $($mode.DeviceName)"); continue }
+        try {
+            if ([OpenSynapseNative.DisplayModeManager]::RestoreMode(
+                [string]$currentMode.DeviceName, [int]$mode.Width, [int]$mode.Height, [int]$mode.BitsPerPixel,
+                [int]$mode.Frequency, [int]$mode.PositionX, [int]$mode.PositionY, [int]$mode.Orientation)) { $changes++ }
+        }
+        catch { $warnings.Add("Mode restore failed for $($mode.DeviceName): $($_.Exception.Message)") }
+    }
+    $currentScaling = @([OpenSynapseNative.DisplayScaling]::GetActiveDisplays())
+    foreach ($captured in @($Snapshot.Scaling)) {
+        $target = @($currentScaling | Where-Object {
+            [string]$_.GdiDeviceName -eq [string]$captured.GdiDeviceName -or [string]$_.Key -eq [string]$captured.Key
+        }) | Select-Object -First 1
+        if ($null -eq $target) { $warnings.Add("Scaling path is no longer active: $($captured.GdiDeviceName)"); continue }
+        try { if ([OpenSynapseNative.DisplayScaling]::SetScale($target, [int]$captured.CurrentPercent)) { $changes++ } }
+        catch { $warnings.Add("Scaling restore failed for $($captured.GdiDeviceName): $($_.Exception.Message)") }
+    }
+    foreach ($captured in @($Snapshot.AdvancedColor | Where-Object { [bool]$_.Supported })) {
+        try { if ([OpenSynapseNative.AdvancedColorManager]::SetEnabled([string]$captured.Key, [bool]$captured.Enabled)) { $changes++ } }
+        catch { $warnings.Add("Advanced Color restore failed for $($captured.GdiDeviceName): $($_.Exception.Message)") }
+    }
+    foreach ($captured in @($Snapshot.ColorProfiles | Where-Object { [bool]$_.Available })) {
+        $capturedMode = @($Snapshot.Modes | Where-Object { [string]$_.DeviceName -eq [string]$captured.GdiDeviceName }) | Select-Object -First 1
+        $currentDeviceName = [string]$captured.GdiDeviceName
+        if ($null -ne $capturedMode -and $null -ne $capturedMode.PSObject.Properties['MonitorDeviceKey'] -and
+            -not [string]::IsNullOrWhiteSpace([string]$capturedMode.MonitorDeviceKey)) {
+            $currentIdentityMode = @($currentModes | Where-Object { [string]$_.MonitorDeviceKey -eq [string]$capturedMode.MonitorDeviceKey }) | Select-Object -First 1
+            $currentDeviceName = if ($null -ne $currentIdentityMode) { [string]$currentIdentityMode.DeviceName } else { '' }
+        }
+        if ([string]::IsNullOrWhiteSpace($currentDeviceName)) { $warnings.Add("ICC display is no longer active: $($captured.GdiDeviceName)"); continue }
+        try { if ([OpenSynapseNative.ColorProfileManager]::SetProfile($currentDeviceName, [string]$captured.ProfilePath)) { $changes++ } }
+        catch { $warnings.Add("ICC restore failed for $($captured.GdiDeviceName): $($_.Exception.Message)") }
+    }
+    $brightnessResult = Restore-MonitorBrightnessStates @($Snapshot.Brightness)
+    $changes += [int]$brightnessResult.Changes
+    foreach ($warning in @($brightnessResult.Warnings)) { $warnings.Add([string]$warning) }
+    if ($null -ne $Snapshot.PSObject.Properties['PhysicalBrightness']) {
+        foreach ($captured in @($Snapshot.PhysicalBrightness | Where-Object { [bool]$_.Supported })) {
+            $capturedMode = @($Snapshot.Modes | Where-Object { [string]$_.DeviceName -eq [string]$captured.GdiDeviceName }) | Select-Object -First 1
+            $currentDeviceName = [string]$captured.GdiDeviceName
+            if ($null -ne $capturedMode -and $null -ne $capturedMode.PSObject.Properties['MonitorDeviceKey'] -and
+                -not [string]::IsNullOrWhiteSpace([string]$capturedMode.MonitorDeviceKey)) {
+                $currentIdentityMode = @($currentModes | Where-Object { [string]$_.MonitorDeviceKey -eq [string]$capturedMode.MonitorDeviceKey }) | Select-Object -First 1
+                $currentDeviceName = if ($null -ne $currentIdentityMode) { [string]$currentIdentityMode.DeviceName } else { '' }
+            }
+            if ([string]::IsNullOrWhiteSpace($currentDeviceName)) { $warnings.Add("DDC/CI display is no longer active: $($captured.GdiDeviceName)"); continue }
+            try {
+                if ([OpenSynapseNative.PhysicalMonitorBrightnessManager]::SetBrightness(
+                    $currentDeviceName, [int]$captured.PhysicalIndex, [uint32]$captured.Current)) { $changes++ }
+            }
+            catch { $warnings.Add("DDC/CI brightness restore failed for $($captured.GdiDeviceName)#$($captured.PhysicalIndex): $($_.Exception.Message)") }
+        }
+    }
+
+    $currentDrr = @([OpenSynapseNative.DynamicRefreshManager]::GetStatuses())
+    foreach ($captured in @($Snapshot.DynamicRefresh)) {
+        $current = @($currentDrr | Where-Object {
+            [string]$_.Key -eq [string]$captured.Key -or [string]$_.GdiDeviceName -eq [string]$captured.GdiDeviceName
+        }) | Select-Object -First 1
+        if ($null -eq $current) { $warnings.Add("DRR path is no longer active: $($captured.GdiDeviceName)"); continue }
+        $needsRestore = [bool]$current.Enabled -ne [bool]$captured.Enabled -or
+            [Math]::Abs([int]$current.BaseFrequency - [int]$captured.BaseFrequency) -gt 1 -or
+            ([bool]$captured.Enabled -and [Math]::Abs([int]$current.BoostFrequency - [int]$captured.BoostFrequency) -gt 1)
+        if (-not $needsRestore) { continue }
+        try {
+            if ([OpenSynapseNative.DynamicRefreshManager]::RestoreStatus(
+                [string]$current.GdiDeviceName, [bool]$captured.Enabled,
+                [int]$captured.BaseFrequency, [int]$captured.BoostFrequency)) { $changes++ }
+        }
+        catch { $warnings.Add("DRR restore failed for $($captured.GdiDeviceName): $($_.Exception.Message)") }
+    }
+    Start-Sleep -Milliseconds 300
+    $verification = Compare-DisplayStateSnapshot $Snapshot
+    foreach ($difference in @($verification.Differences)) { $warnings.Add([string]$difference) }
+    return [pscustomobject][ordered]@{
+        Verified = [bool]$verification.Valid
+        Changes = $changes
+        Warnings = $warnings.ToArray()
+        Differences = @($verification.Differences)
+    }
+}
+
+function Ensure-DisplayStateCaptured {
+    param([object]$State)
+    if ($null -eq $State.DisplayStateSnapshot) {
+        $State.DisplayStateSnapshot = Get-DisplayStateSnapshot
+        Save-AppState $State
+        Write-AppLog "Captured complete display state for $(@($State.DisplayStateSnapshot.Modes).Count) active display(s)."
+    }
+    return $State.DisplayStateSnapshot
+}
+
 function Resolve-ProfileBrightnessTarget {
     param(
         [ValidateSet('Balance', 'Quiet')][string]$Name,
@@ -2198,7 +2600,7 @@ function Resolve-ProfileBrightnessTarget {
 
 function Apply-ManagedBrightness {
     param(
-        [ValidateSet('Hyper', 'Balance', 'Quiet')][string]$Name,
+        [ValidateSet('Hyper', 'Balance', 'Quiet', 'Experiment')][string]$Name,
         [object]$Config,
         [object]$State,
         [AllowNull()][object]$Snapshot
@@ -2239,9 +2641,10 @@ function Apply-ManagedBrightness {
 function Resolve-RefreshPolicy {
     param(
         [object]$Config,
-        [ValidateSet('Hyper', 'Balance', 'Quiet')][string]$ProfileName,
+        [ValidateSet('Hyper', 'Balance', 'Quiet', 'Experiment')][string]$ProfileName,
         [AllowNull()][object]$Snapshot = $null
     )
+    if ($ProfileName -eq 'Experiment') { return "Fixed$([int]$Config.ExperimentRefreshRate)" }
     if ($ProfileName -eq 'Quiet' -and [string]$Config.Selection -eq 'Quiet') {
         return 'Fixed60'
     }
@@ -2254,9 +2657,59 @@ function Resolve-RefreshPolicy {
     return $policy
 }
 
+function Test-RefreshPolicyApplied {
+    param([string]$RefreshPolicy)
+    $differences = New-Object Collections.Generic.List[string]
+    if ($RefreshPolicy -eq 'Unmanaged' -or [string]::IsNullOrWhiteSpace($RefreshPolicy)) {
+        return [pscustomobject]@{ Valid = $true; Differences = @(); State = Get-DisplayStateSnapshot }
+    }
+    $state = Get-DisplayStateSnapshot
+    $drrByName = @{}
+    foreach ($item in @($state.DynamicRefresh)) { $drrByName[[string]$item.GdiDeviceName] = $item }
+
+    if ($RefreshPolicy -eq 'DynamicNative') {
+        $internal = @($state.DynamicRefresh | Where-Object { [bool]$_.IsInternal })
+        if ($internal.Count -gt 0) {
+            foreach ($item in $internal) {
+                if (-not [bool]$item.Enabled -or [Math]::Abs([int]$item.BaseFrequency - 60) -gt 1 -or [int]$item.BoostFrequency -le 60) {
+                    $differences.Add("Native DRR verification failed on $($item.GdiDeviceName): enabled=$($item.Enabled), range=$($item.BaseFrequency)-$($item.BoostFrequency).")
+                }
+            }
+        }
+    }
+    elseif ($RefreshPolicy -match '^Fixed(?<Hz>60|120|240)$') {
+        $targetHz = [int]$Matches.Hz
+        foreach ($mode in @($state.Modes)) {
+            $drr = if ($drrByName.ContainsKey([string]$mode.DeviceName)) { $drrByName[[string]$mode.DeviceName] } else { $null }
+            if ($null -ne $drr -and [bool]$drr.Enabled) {
+                $differences.Add("DRR remained enabled on $($mode.DeviceName) after fixed refresh was requested.")
+                continue
+            }
+            $isInternal = $null -ne $drr -and [bool]$drr.IsInternal
+            if ($isInternal) {
+                if ([Math]::Abs([int]$mode.Frequency - $targetHz) -gt 1) {
+                    $differences.Add("Refresh verification failed on $($mode.DeviceName): expected $targetHz Hz, actual $($mode.Frequency) Hz.")
+                }
+            }
+            else {
+                $rates = @([OpenSynapseNative.DisplayModeManager]::GetSupportedRefreshRates([string]$mode.DeviceName))
+                $maximum = if ($rates.Count -gt 0) { [int]($rates | Measure-Object -Maximum).Maximum } else { [int]$mode.Frequency }
+                if ([Math]::Abs([int]$mode.Frequency - $maximum) -gt 1) {
+                    $differences.Add("External refresh verification failed on $($mode.DeviceName): expected maximum $maximum Hz, actual $($mode.Frequency) Hz.")
+                }
+            }
+        }
+    }
+    return [pscustomobject][ordered]@{
+        Valid = $differences.Count -eq 0
+        Differences = $differences.ToArray()
+        State = $state
+    }
+}
+
 function Apply-DisplayPolicy {
     param(
-        [ValidateSet('Hyper', 'Balance', 'Quiet')][string]$Name,
+        [ValidateSet('Hyper', 'Balance', 'Quiet', 'Experiment')][string]$Name,
         [object]$Config,
         [object]$State,
         [switch]$Full,
@@ -2267,9 +2720,15 @@ function Apply-DisplayPolicy {
     )
     $refreshWarning = ''
     $refreshPolicy = ''
+    $effectiveRefreshPolicy = ''
+    $refreshVerified = $null
+    if ($ApplyVisualPolicy -or $ApplyRefreshPolicy -or $RepairScaling -or ($Full -and [bool]$Config.ManageBrightness)) {
+        $null = Ensure-DisplayStateCaptured $State
+    }
     try {
         if ($ApplyVisualPolicy -or $ApplyRefreshPolicy) {
             $refreshPolicy = Resolve-RefreshPolicy $Config $Name $Snapshot
+            $effectiveRefreshPolicy = $refreshPolicy
             if ($refreshPolicy -ne 'Unmanaged') {
                 Write-AppLog "$Name refresh policy=$refreshPolicy applying."
                 if ($refreshPolicy -eq 'DynamicNative') {
@@ -2295,6 +2754,12 @@ function Apply-DisplayPolicy {
                         default { 0 }
                     }
                 }
+                Start-Sleep -Milliseconds 250
+                $refreshVerification = Test-RefreshPolicyApplied $refreshPolicy
+                if (-not [bool]$refreshVerification.Valid) {
+                    throw "Refresh policy verification failed: $($refreshVerification.Differences -join ' ')"
+                }
+                $refreshVerified = $true
                 Write-AppLog "$Name refresh policy=$refreshPolicy changed=$count."
             }
         }
@@ -2307,15 +2772,24 @@ function Apply-DisplayPolicy {
                 try { $null = [OpenSynapseNative.DynamicRefreshManager]::ApplyExternalMaximumRefresh() }
                 catch { Write-AppLog "External maximum refresh was preserved on a best-effort basis during Eco fallback: $($_.Exception.Message)" }
                 $fallbackCount = [OpenSynapseNative.DynamicRefreshManager]::ApplyInternalFixedRefresh(60)
+                Start-Sleep -Milliseconds 250
+                $fallbackVerification = Test-RefreshPolicyApplied Fixed60
+                if (-not [bool]$fallbackVerification.Valid) {
+                    throw "Eco 60 Hz fallback verification failed: $($fallbackVerification.Differences -join ' ')"
+                }
+                $effectiveRefreshPolicy = 'Fixed60'
+                $refreshVerified = $true
                 $refreshWarning = "$dynamicFailure Auto dynamic refresh failed; the internal display fell back to Eco 60 Hz."
                 Write-AppLog "Dynamic refresh failed and safely fell back to Eco 60 Hz; changed=$fallbackCount; error=$dynamicFailure"
             }
             catch {
+                $refreshVerified = $false
                 $refreshWarning = "$dynamicFailure Eco 60 Hz fallback also failed: $($_.Exception.Message)"
                 Write-AppLog "Refresh policy and Eco 60 Hz fallback failed: $refreshWarning"
             }
         }
         else {
+            $refreshVerified = $false
             $refreshWarning = $dynamicFailure
             Write-AppLog "Refresh policy failed: $refreshWarning"
         }
@@ -2364,23 +2838,54 @@ function Apply-DisplayPolicy {
         Start-Sleep -Milliseconds 250
         $scaleChanges = Repair-DisplayScaling $Config
     }
-    return [pscustomobject]@{ ScaleChanges = $scaleChanges; RefreshWarning = $refreshWarning }
+    return [pscustomobject]@{
+        ScaleChanges = $scaleChanges
+        RefreshPolicy = $refreshPolicy
+        EffectiveRefreshPolicy = $effectiveRefreshPolicy
+        RefreshVerified = $refreshVerified
+        RefreshWarning = $refreshWarning
+    }
 }
 
 function Restore-DisplayPolicy {
     param([object]$State)
-    try {
-        foreach ($item in @($State.AdvancedColorStates)) {
-            if ($null -ne $item.PSObject.Properties['Key'] -and -not [string]::IsNullOrWhiteSpace([string]$item.Key)) {
-                $null = [OpenSynapseNative.AdvancedColorManager]::SetEnabled([string]$item.Key, [bool]$item.Enabled)
+    $hadCompleteSnapshot = $null -ne $State.DisplayStateSnapshot
+    $completeSnapshotRestored = $false
+    if ($hadCompleteSnapshot) {
+        try {
+            $result = Restore-DisplayStateSnapshot $State.DisplayStateSnapshot
+            if (-not [bool]$result.Verified) {
+                Write-AppLog "Complete display-state restore finished with verification differences: $($result.Differences -join '; ')"
+            }
+            else {
+                Write-AppLog "Complete display state restored and verified; changes=$($result.Changes)."
+                $State.DisplayStateSnapshot = $null
+                $completeSnapshotRestored = $true
             }
         }
+        catch { Write-AppLog "Complete display-state restore failed: $($_.Exception.Message)" }
+    }
+    if (-not $hadCompleteSnapshot) {
+        try {
+            foreach ($item in @($State.AdvancedColorStates)) {
+                if ($null -ne $item.PSObject.Properties['Key'] -and -not [string]::IsNullOrWhiteSpace([string]$item.Key)) {
+                    $null = [OpenSynapseNative.AdvancedColorManager]::SetEnabled([string]$item.Key, [bool]$item.Enabled)
+                }
+            }
+            $State.AdvancedColorStates = @()
+        } catch { }
+        # Legacy fields remain as a migration fallback for pre-2.5 state files.
+        try { $null = [OpenSynapseNative.DynamicRefreshManager]::Disable() } catch { }
+        try { [OpenSynapseNative.DisplayModeManager]::RestoreRegistryModes() } catch { }
+        if ($null -ne $State.CapturedBrightness) {
+            $null = Set-InternalBrightness ([int]$State.CapturedBrightness)
+            $State.CapturedBrightness = $null
+        }
+    }
+    elseif ($completeSnapshotRestored) {
+        # A verified complete restore is authoritative. Discard migration-era
+        # fields without applying them a second time over the restored snapshot.
         $State.AdvancedColorStates = @()
-    } catch { }
-    try { $null = [OpenSynapseNative.DynamicRefreshManager]::Disable() } catch { }
-    try { [OpenSynapseNative.DisplayModeManager]::RestoreRegistryModes() } catch { }
-    if ($null -ne $State.CapturedBrightness) {
-        $null = Set-InternalBrightness ([int]$State.CapturedBrightness)
         $State.CapturedBrightness = $null
     }
     Save-AppState $State
@@ -2390,15 +2895,304 @@ function Get-NvidiaSnapshot {
     $command = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
     if ($null -eq $command) { return $null }
     try {
-        $line = & $command.Source '--query-gpu=name,pstate,power.draw,utilization.gpu,display_active,enforced.power.limit,power.default_limit,power.max_limit' '--format=csv,noheader,nounits' 2>$null | Select-Object -First 1
+        $line = & $command.Source '--query-gpu=name,pstate,power.draw,utilization.gpu,temperature.gpu,clocks.current.graphics,clocks.current.memory,clocks_throttle_reasons.active,display_active,enforced.power.limit,power.default_limit,power.max_limit' '--format=csv,noheader,nounits' 2>$null | Select-Object -First 1
         if (-not $line) { return $null }
         $parts = $line -split ',' | ForEach-Object { $_.Trim() }
+        if ($parts.Count -lt 12) { return $null }
         return [pscustomobject]@{
             Name = $parts[0]; PState = $parts[1]; PowerW = $parts[2]; Utilization = $parts[3]
-            DisplayActive = $parts[4]; EnforcedLimitW = $parts[5]; DefaultLimitW = $parts[6]; MaximumLimitW = $parts[7]
+            TemperatureC = $parts[4]; GraphicsClockMhz = $parts[5]; MemoryClockMhz = $parts[6]
+            ThrottleReasons = $parts[7]; ThrottlingDetected = $parts[7] -notin @('0x0000000000000000', '0x00000000', '0', 'N/A')
+            DisplayActive = $parts[8]; EnforcedLimitW = $parts[9]; DefaultLimitW = $parts[10]; MaximumLimitW = $parts[11]
         }
     }
     catch { return $null }
+}
+
+function Get-HardwareTelemetrySnapshot {
+    param([AllowNull()][object]$PowerSnapshot = $null, [switch]$Force)
+    $minimumSeconds = if ($null -ne $PowerSnapshot -and [string]$PowerSnapshot.Source -eq 'Battery') { 60 } else { 15 }
+    if (-not $Force -and $null -ne $script:LastHardwareTelemetry -and
+        ((Get-Date) - $script:LastHardwareTelemetryAt).TotalSeconds -lt $minimumSeconds) {
+        return $script:LastHardwareTelemetry
+    }
+    try {
+        $script:LastHardwareTelemetry = [OpenSynapseNative.HardwareTelemetry]::Read()
+        $script:LastHardwareTelemetryAt = Get-Date
+    }
+    catch {
+        $script:LastHardwareTelemetry = [pscustomobject]@{ Available = $false; Error = $_.Exception.Message }
+        $script:LastHardwareTelemetryAt = Get-Date
+    }
+    return $script:LastHardwareTelemetry
+}
+
+function Get-NvidiaHardwareSnapshot {
+    param([AllowNull()][object]$PowerSnapshot = $null, [switch]$Force)
+    $minimumSeconds = if ($null -ne $PowerSnapshot -and [string]$PowerSnapshot.Source -eq 'Battery') { 60 } else { 30 }
+    if (-not $Force -and $null -ne $PowerSnapshot -and [string]$PowerSnapshot.Source -eq 'Battery') {
+        $windowsGpu = try { [OpenSynapseNative.GpuTelemetry]::ReadLatest() } catch { $null }
+        if ($null -eq $windowsGpu -or -not [bool]$windowsGpu.DiscreteActive) {
+            return $script:LastNvidiaHardwareSnapshot
+        }
+    }
+    if (-not $Force -and $null -ne $script:LastNvidiaHardwareSnapshot -and
+        ((Get-Date) - $script:LastNvidiaHardwareSnapshotAt).TotalSeconds -lt $minimumSeconds) {
+        return $script:LastNvidiaHardwareSnapshot
+    }
+    $script:LastNvidiaHardwareSnapshot = Get-NvidiaSnapshot
+    $script:LastNvidiaHardwareSnapshotAt = Get-Date
+    return $script:LastNvidiaHardwareSnapshot
+}
+
+function Get-DisplayTelemetrySnapshot {
+    param([AllowNull()][object]$PowerSnapshot = $null, [switch]$Force)
+    $minimumSeconds = if ($null -ne $PowerSnapshot -and [string]$PowerSnapshot.Source -eq 'Battery') { 60 } else { 30 }
+    if (-not $Force -and $null -ne $script:LastDisplayTelemetry -and
+        ((Get-Date) - $script:LastDisplayTelemetryAt).TotalSeconds -lt $minimumSeconds) {
+        return $script:LastDisplayTelemetry
+    }
+    try { $script:LastDisplayTelemetry = Get-DisplayStateSnapshot }
+    catch {
+        $script:LastDisplayTelemetry = [pscustomobject][ordered]@{
+            Version = 2
+            CapturedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+            Modes = @()
+            Scaling = @()
+            DynamicRefresh = @()
+            AdvancedColor = @()
+            ColorProfiles = @()
+            Brightness = @()
+            PhysicalBrightness = @()
+            Error = $_.Exception.Message
+        }
+    }
+    $script:LastDisplayTelemetryAt = Get-Date
+    return $script:LastDisplayTelemetry
+}
+
+function Get-MachineEnvironmentSnapshot {
+    $computer = try { Get-CimInstance Win32_ComputerSystem -ErrorAction Stop } catch { $null }
+    $bios = try { Get-CimInstance Win32_BIOS -ErrorAction Stop } catch { $null }
+    $processor = try { Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1 } catch { $null }
+    $operatingSystem = try { Get-CimInstance Win32_OperatingSystem -ErrorAction Stop } catch { $null }
+    $video = try { @(Get-CimInstance Win32_VideoController -ErrorAction Stop | ForEach-Object {
+        [pscustomobject][ordered]@{
+            Name = [string]$_.Name
+            DriverVersion = [string]$_.DriverVersion
+            PnpDeviceId = [string]$_.PNPDeviceID
+        }
+    }) } catch { @() }
+    $npuDevices = try { @(Get-CimInstance Win32_PnPEntity -ErrorAction Stop | Where-Object {
+        [string]$_.Name -match '(?i)\bNPU\b|neural processing|AI engine|compute accelerator'
+    } | ForEach-Object {
+        [pscustomobject][ordered]@{ Name = [string]$_.Name; PnpDeviceId = [string]$_.PNPDeviceID; Status = [string]$_.Status }
+    }) } catch { @() }
+    $ecVersion = 'Unavailable'
+    if ($null -ne $bios -and $null -ne $bios.PSObject.Properties['EmbeddedControllerMajorVersion'] -and
+        $null -ne $bios.PSObject.Properties['EmbeddedControllerMinorVersion']) {
+        $ecMajor = [int]$bios.EmbeddedControllerMajorVersion
+        $ecMinor = [int]$bios.EmbeddedControllerMinorVersion
+        if ($ecMajor -ge 0 -and $ecMajor -lt 255 -and $ecMinor -ge 0 -and $ecMinor -lt 255) { $ecVersion = "$ecMajor.$ecMinor" }
+    }
+    return [pscustomobject][ordered]@{
+        Manufacturer = if ($null -ne $computer) { [string]$computer.Manufacturer } else { 'Unavailable' }
+        Model = if ($null -ne $computer) { [string]$computer.Model } else { 'Unavailable' }
+        SystemSku = if ($null -ne $computer -and $null -ne $computer.PSObject.Properties['SystemSKUNumber']) { [string]$computer.SystemSKUNumber } else { '' }
+        Processor = if ($null -ne $processor) { [string]$processor.Name } else { 'Unavailable' }
+        BiosVersion = if ($null -ne $bios) { [string]$bios.SMBIOSBIOSVersion } else { 'Unavailable' }
+        EmbeddedControllerVersion = $ecVersion
+        WindowsCaption = if ($null -ne $operatingSystem) { [string]$operatingSystem.Caption } else { [Environment]::OSVersion.VersionString }
+        WindowsVersion = if ($null -ne $operatingSystem) { [string]$operatingSystem.Version } else { [Environment]::OSVersion.VersionString }
+        WindowsBuild = if ($null -ne $operatingSystem) { [string]$operatingSystem.BuildNumber } else { '' }
+        VideoControllers = $video
+        NpuDevices = $npuDevices
+    }
+}
+
+function Export-ExperimentEnvironmentReport {
+    param(
+        [object]$Config,
+        [object]$State,
+        [object]$PowerSnapshot,
+        [object]$AutomationState,
+        [ValidateSet('Manual', 'Start', 'End', 'Restored', 'Drift')][string]$Phase = 'Manual',
+        [string]$DestinationPath = ''
+    )
+    if (-not (Test-Path -LiteralPath $script:ExperimentReportDir)) {
+        [IO.Directory]::CreateDirectory($script:ExperimentReportDir) | Out-Null
+    }
+    $sessionId = if ($null -ne $State.ExperimentSession -and
+        $null -ne $State.ExperimentSession.PSObject.Properties['SessionId']) { [string]$State.ExperimentSession.SessionId } else { 'manual' }
+    $baseName = 'OpenSynapse-experiment-{0}-{1}-{2}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'), $sessionId, $Phase.ToLowerInvariant()
+    $jsonPath = if ([string]::IsNullOrWhiteSpace($DestinationPath)) {
+        Join-Path $script:ExperimentReportDir ($baseName + '.json')
+    }
+    else { [IO.Path]::GetFullPath($DestinationPath) }
+    $htmlPath = [IO.Path]::ChangeExtension($jsonPath, '.html')
+    $display = Get-DisplayTelemetrySnapshot $PowerSnapshot -Force
+    $verificationTarget = if ($null -ne $State.ExperimentSession -and $Phase -eq 'Restored' -and
+        $null -ne $State.ExperimentSession.PSObject.Properties['OriginalDisplayState']) { $State.ExperimentSession.OriginalDisplayState }
+        elseif ($null -ne $State.ExperimentSession -and
+            $null -ne $State.ExperimentSession.PSObject.Properties['BaselineDisplayState']) { $State.ExperimentSession.BaselineDisplayState }
+        else { $null }
+    $displayVerification = if ($null -ne $verificationTarget) { Compare-DisplayStateSnapshot $verificationTarget $display } else { $null }
+    $hardware = Get-HardwareTelemetrySnapshot $PowerSnapshot -Force
+    $nvidia = Get-NvidiaHardwareSnapshot $PowerSnapshot
+    $windowsGpu = try { [OpenSynapseNative.GpuTelemetry]::ReadLatest() } catch { [pscustomobject]@{ Available = $false; Error = $_.Exception.Message } }
+    $activePlanGuid = try { Get-ActivePlanGuid } catch { 'Unavailable' }
+    $manifest = [pscustomobject][ordered]@{
+        ReportSchemaVersion = 1
+        OpenSynapseVersion = $script:AppVersion
+        TelemetrySchemaVersion = $script:TelemetrySchemaVersion
+        SessionId = $sessionId
+        Phase = $Phase
+        GeneratedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+        SafetyBoundary = 'Public Windows interfaces only; no EC, fan, OEM heterogeneous-core thresholds, TGP or MUX writes.'
+        Machine = Get-MachineEnvironmentSnapshot
+        Power = $PowerSnapshot
+        Selection = [string]$Config.Selection
+        ActivePlanGuid = $activePlanGuid
+        Experiment = [pscustomobject][ordered]@{
+            Locked = [string]$Config.Selection -eq 'Experiment'
+            RefreshTargetHz = [int]$Config.ExperimentRefreshRate
+            VerificationSeconds = [int]$Config.ExperimentVerificationSeconds
+            StartedAtUtc = if ($null -ne $State.ExperimentSession) { [string]$State.ExperimentSession.StartedAtUtc } else { '' }
+        }
+        Display = $display
+        DisplayVerification = $displayVerification
+        PolicyVerification = $script:LastPolicyVerification
+        HardwareTelemetry = $hardware
+        WindowsGpuTelemetry = $windowsGpu
+        NvidiaTelemetry = $nvidia
+        AutomationTelemetry = $AutomationState
+    }
+    $directory = Split-Path -Parent $jsonPath
+    if (-not [string]::IsNullOrWhiteSpace($directory) -and -not (Test-Path -LiteralPath $directory)) {
+        [IO.Directory]::CreateDirectory($directory) | Out-Null
+    }
+    [IO.File]::WriteAllText($jsonPath, ($manifest | ConvertTo-Json -Depth 12), [Text.UTF8Encoding]::new($false))
+    $jsonSha256 = [string](Get-FileHash -LiteralPath $jsonPath -Algorithm SHA256 -ErrorAction Stop).Hash
+    $hashPath = $jsonPath + '.sha256'
+    [IO.File]::WriteAllText($hashPath, "$jsonSha256  $([IO.Path]::GetFileName($jsonPath))`r`n", [Text.UTF8Encoding]::new($false))
+
+    $encode = { param([object]$Value) [Net.WebUtility]::HtmlEncode([string]$Value) }
+    $displayRows = @($display.Modes | ForEach-Object {
+        $mode = $_
+        $scale = @($display.Scaling | Where-Object { [string]$_.GdiDeviceName -eq [string]$mode.DeviceName }) | Select-Object -First 1
+        $drr = @($display.DynamicRefresh | Where-Object { [string]$_.GdiDeviceName -eq [string]$mode.DeviceName }) | Select-Object -First 1
+        $color = @($display.AdvancedColor | Where-Object { [string]$_.GdiDeviceName -eq [string]$mode.DeviceName }) | Select-Object -First 1
+        $profile = @($display.ColorProfiles | Where-Object { [string]$_.GdiDeviceName -eq [string]$mode.DeviceName }) | Select-Object -First 1
+        $physicalBrightness = @($display.PhysicalBrightness | Where-Object { [string]$_.GdiDeviceName -eq [string]$mode.DeviceName -and [bool]$_.Supported })
+        $brightnessText = if ($physicalBrightness.Count -gt 0) { @($physicalBrightness | ForEach-Object { "DDC/CI $($_.CurrentPercent)%" }) -join ', ' } else { 'Windows endpoint/unsupported' }
+        '<tr><td>{0}</td><td>{1}x{2} @ {3} Hz</td><td>{4}%</td><td>{5}</td><td>{6}</td><td>{7}</td><td>{8}</td></tr>' -f
+            (& $encode $mode.DeviceName), $mode.Width, $mode.Height, $mode.Frequency,
+            $(if ($null -ne $scale) { $scale.CurrentPercent } else { 'N/A' }),
+            $(if ($null -ne $drr) { "enabled=$($drr.Enabled), $($drr.BaseFrequency)-$($drr.BoostFrequency)" } else { 'N/A' }),
+            $(if ($null -ne $color) { "enabled=$($color.Enabled), $($color.BitsPerColorChannel)-bit" } else { 'N/A' }),
+            (& $encode $(if ($null -ne $profile) { $profile.ProfilePath } else { 'Unavailable' })),
+            (& $encode $brightnessText)
+    }) -join [Environment]::NewLine
+    $verificationText = if ($null -eq $displayVerification) { 'No experiment baseline was active.' }
+        elseif ([bool]$displayVerification.Valid) { 'PASS - current display state matches the locked baseline.' }
+        else { 'FAIL - ' + (@($displayVerification.Differences) -join '; ') }
+    $maximumTemperatureText = if ($null -ne $hardware.PSObject.Properties['MaximumTemperatureC']) { "$($hardware.MaximumTemperatureC) C" } else { 'Unavailable' }
+    $thermalThrottleText = if ($null -ne $hardware.PSObject.Properties['ThermalThrottlingDetected']) { [string]$hardware.ThermalThrottlingDetected } else { 'Unavailable' }
+    $npuText = if ($null -ne $hardware.PSObject.Properties['NpuAvailable'] -and [bool]$hardware.NpuAvailable) { "$($hardware.NpuUtilizationPercent)% via $($hardware.NpuCounterSet)" } else { 'Not exposed by Windows performance counters' }
+    $gpuText = if ($null -ne $windowsGpu -and $null -ne $windowsGpu.PSObject.Properties['Available'] -and [bool]$windowsGpu.Available) { "total=$($windowsGpu.TotalUtilizationPercent)%, dGPU=$($windowsGpu.DiscreteUtilizationPercent)%" } else { 'Windows GPU sample unavailable' }
+    $html = @"
+<!doctype html><html><head><meta charset="utf-8"><title>OpenSynapse experiment environment</title>
+<style>body{font-family:Segoe UI,Arial;background:#0b0f0d;color:#f4f4f4;margin:32px}h1,h2{color:#39df21}table{border-collapse:collapse;width:100%}th,td{border:1px solid #485048;padding:8px;text-align:left}code{color:#b7f7ac}.muted{color:#aab4aa}</style></head><body>
+<h1>OpenSynapse experiment environment report</h1><p>Phase: <code>$(& $encode $Phase)</code> | Session: <code>$(& $encode $sessionId)</code> | Generated: <code>$(& $encode $manifest.GeneratedAtUtc)</code></p>
+<h2>Verification</h2><p>$(& $encode $verificationText)</p>
+<h2>Machine and power</h2><p>$(& $encode $manifest.Machine.Manufacturer) $(& $encode $manifest.Machine.Model) | $(& $encode $manifest.Machine.Processor)</p><p>Selection: <code>$(& $encode $manifest.Selection)</code> | Supply: <code>$(& $encode $PowerSnapshot.SupplyType)</code> | Battery: <code>$(& $encode $PowerSnapshot.BatteryPercent)%</code></p>
+<h2>Displays</h2><table><thead><tr><th>Display</th><th>Mode</th><th>Scale</th><th>DRR</th><th>Advanced Color</th><th>ICC profile</th><th>Brightness</th></tr></thead><tbody>$displayRows</tbody></table>
+<h2>Hardware telemetry</h2><p>Maximum thermal-zone temperature: <code>$(& $encode $maximumTemperatureText)</code> | Thermal throttling: <code>$(& $encode $thermalThrottleText)</code> | GPU: <code>$(& $encode $gpuText)</code> | NPU: <code>$(& $encode $npuText)</code></p>
+<p class="muted">The JSON report beside this file is the machine-readable source of record. SHA-256: <code>$jsonSha256</code>. OpenSynapse does not write EC, fan, OEM heterogeneous-core thresholds, TGP or MUX settings.</p></body></html>
+"@
+    [IO.File]::WriteAllText($htmlPath, $html, [Text.UTF8Encoding]::new($false))
+    Write-AppLog "Experiment environment report exported: phase=$Phase path=$jsonPath"
+    return [pscustomobject][ordered]@{ JsonPath = $jsonPath; HtmlPath = $htmlPath; HashPath = $hashPath; JsonSha256 = $jsonSha256; Manifest = $manifest }
+}
+
+function Initialize-ExperimentSession {
+    param([object]$State)
+    if ($null -ne $State.ExperimentSession) { return $false }
+    $State.ExperimentSession = [pscustomobject][ordered]@{
+        Version = 1
+        SessionId = [Guid]::NewGuid().ToString('N').Substring(0, 12)
+        StartedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+        OriginalDisplayState = Get-DisplayStateSnapshot
+        BaselineDisplayState = $null
+        StartReportJson = ''
+        StartReportHtml = ''
+    }
+    Save-AppState $State
+    Write-AppLog "Experiment session initialized: $($State.ExperimentSession.SessionId)."
+    return $true
+}
+
+function Complete-ExperimentSessionStart {
+    param([object]$Config, [object]$State, [object]$PowerSnapshot, [object]$AutomationState, [switch]$NewSession)
+    if ($NewSession -or $null -eq $State.ExperimentSession.BaselineDisplayState) {
+        $State.ExperimentSession.BaselineDisplayState = Get-DisplayStateSnapshot
+    }
+    $verification = Test-RefreshPolicyApplied "Fixed$([int]$Config.ExperimentRefreshRate)"
+    if (-not [bool]$verification.Valid) { throw "Experiment refresh lock verification failed: $($verification.Differences -join ' ')" }
+    $baselineVerification = Compare-DisplayStateSnapshot $State.ExperimentSession.BaselineDisplayState
+    if (-not [bool]$baselineVerification.Valid) {
+        throw "Experiment display baseline verification failed: $($baselineVerification.Differences -join ' ')"
+    }
+    if ($NewSession -and [bool]$Config.ExperimentAutoReport) {
+        $report = Export-ExperimentEnvironmentReport $Config $State $PowerSnapshot $AutomationState Start
+        $State.ExperimentSession.StartReportJson = [string]$report.JsonPath
+        $State.ExperimentSession.StartReportHtml = [string]$report.HtmlPath
+    }
+    Save-AppState $State
+    $script:LastExperimentVerificationAt = Get-Date
+}
+
+function Stop-ExperimentSession {
+    param([object]$Config, [object]$State, [object]$PowerSnapshot, [object]$AutomationState)
+    if ($null -eq $State.ExperimentSession) { return [pscustomobject]@{ Verified = $true; Differences = @() } }
+    if ([bool]$Config.ExperimentAutoReport) {
+        try { $null = Export-ExperimentEnvironmentReport $Config $State $PowerSnapshot $AutomationState End }
+        catch { Write-AppLog "Experiment end report failed; display restoration will continue: $($_.Exception.Message)" }
+    }
+    $result = Restore-DisplayStateSnapshot $State.ExperimentSession.OriginalDisplayState
+    if ([bool]$result.Verified) {
+        if ([bool]$Config.ExperimentAutoReport) {
+            try { $null = Export-ExperimentEnvironmentReport $Config $State $PowerSnapshot $AutomationState Restored }
+            catch { Write-AppLog "Experiment restored-state report failed: $($_.Exception.Message)" }
+        }
+        Write-AppLog "Experiment session restored and closed: $($State.ExperimentSession.SessionId)."
+        $State.ExperimentSession = $null
+        Save-AppState $State
+    }
+    else { Write-AppLog "Experiment restore remains pending: $($result.Differences -join '; ')" }
+    return $result
+}
+
+function Test-AndRepairExperimentEnvironment {
+    param([object]$Config, [object]$State, [object]$PowerSnapshot, [object]$AutomationState)
+    if ([string]$Config.Selection -ne 'Experiment' -or $null -eq $State.ExperimentSession -or
+        $null -eq $State.ExperimentSession.BaselineDisplayState) { return $null }
+    if (((Get-Date) - $script:LastExperimentVerificationAt).TotalSeconds -lt [int]$Config.ExperimentVerificationSeconds) { return $null }
+    $script:LastExperimentVerificationAt = Get-Date
+    $verification = Compare-DisplayStateSnapshot $State.ExperimentSession.BaselineDisplayState
+    if ([bool]$verification.Valid) { return $verification }
+    Write-AppLog "Experiment environment drift detected: $($verification.Differences -join '; ')"
+    if ([bool]$Config.ExperimentAutoReport) {
+        try { $null = Export-ExperimentEnvironmentReport $Config $State $PowerSnapshot $AutomationState Drift }
+        catch { Write-AppLog "Experiment drift report failed: $($_.Exception.Message)" }
+    }
+    $restore = Restore-DisplayStateSnapshot $State.ExperimentSession.BaselineDisplayState
+    if (-not [bool]$restore.Verified) {
+        Write-AppLog "Experiment environment remains out of lock after repair: $($restore.Differences -join '; ')"
+        return [pscustomobject]@{ Valid = $false; Differences = @($restore.Differences); Restore = $restore }
+    }
+    Write-AppLog "Experiment environment was re-locked after drift; changes=$($restore.Changes)."
+    return Compare-DisplayStateSnapshot $State.ExperimentSession.BaselineDisplayState
 }
 
 function Write-TelemetryRecord {
@@ -2418,6 +3212,10 @@ function Write-TelemetryRecord {
         $configVariable = Get-Variable -Name Config -Scope Script -ErrorAction SilentlyContinue
         $telemetryRefreshPolicy = if ($null -ne $configVariable) { [string]$configVariable.Value.RefreshPolicy } else { '' }
         $timerVariable = Get-Variable -Name Timer -Scope Script -ErrorAction SilentlyContinue
+        $policyVerification = $script:LastPolicyVerification
+        $hardware = Get-HardwareTelemetrySnapshot $Snapshot
+        $nvidia = Get-NvidiaHardwareSnapshot $Snapshot
+        $display = Get-DisplayTelemetrySnapshot $Snapshot
         $record = [pscustomobject][ordered]@{
             SchemaVersion = $script:TelemetrySchemaVersion
             OpenSynapseVersion = $script:AppVersion
@@ -2441,6 +3239,11 @@ function Write-TelemetryRecord {
             TemporaryProfile = $TemporaryProfile
             DesiredProfile = $DesiredProfile
             ActiveProfile = if ([string]::IsNullOrWhiteSpace($ActiveProfile)) { $DesiredProfile } else { $ActiveProfile }
+            PolicyPlanVerified = [bool]$policyVerification.PlanVerified
+            PolicyRequestedRefresh = [string]$policyVerification.RefreshPolicy
+            PolicyEffectiveRefresh = [string]$policyVerification.EffectiveRefreshPolicy
+            PolicyRefreshVerified = $policyVerification.RefreshVerified
+            PolicyVerifiedAtUtc = [string]$policyVerification.VerifiedAtUtc
             CpuPercent = [double]$AutomationState.LastCpuPercent
             GpuPercent = [double]$AutomationState.LastGpuPercent
             GpuSampleSequence = [long]$AutomationState.LastGpuSampleSequence
@@ -2449,6 +3252,29 @@ function Write-TelemetryRecord {
             } else { '' }
             GpuSampleAgeSeconds = [double]$AutomationState.LastGpuSampleAgeSeconds
             GpuTelemetryIntervalSeconds = [Math]::Round([int]$script:LastGpuTelemetryIntervalMs / 1000.0, 1)
+            NvidiaTemperatureC = if ($null -ne $nvidia) { $nvidia.TemperatureC } else { $null }
+            NvidiaPowerW = if ($null -ne $nvidia) { $nvidia.PowerW } else { $null }
+            NvidiaPState = if ($null -ne $nvidia) { [string]$nvidia.PState } else { '' }
+            NvidiaGraphicsClockMhz = if ($null -ne $nvidia) { $nvidia.GraphicsClockMhz } else { $null }
+            NvidiaMemoryClockMhz = if ($null -ne $nvidia) { $nvidia.MemoryClockMhz } else { $null }
+            NvidiaThrottleReasons = if ($null -ne $nvidia) { [string]$nvidia.ThrottleReasons } else { '' }
+            NvidiaThrottlingDetected = $null -ne $nvidia -and [bool]$nvidia.ThrottlingDetected
+            MaximumThermalZoneTemperatureC = if ($null -ne $hardware.PSObject.Properties['MaximumTemperatureC']) { [double]$hardware.MaximumTemperatureC } else { $null }
+            ThermalThrottlingDetected = $null -ne $hardware.PSObject.Properties['ThermalThrottlingDetected'] -and [bool]$hardware.ThermalThrottlingDetected
+            ThermalZones = if ($null -ne $hardware.PSObject.Properties['ThermalZones']) { @($hardware.ThermalZones | ForEach-Object { "$($_.Name):$($_.TemperatureC)C:throttle=$($_.ThrottleReasons)" }) } else { @() }
+            CpuActualFrequencyMhz = if ($null -ne $hardware.PSObject.Properties['CpuActualFrequencyMhz']) { [double]$hardware.CpuActualFrequencyMhz } else { $null }
+            CpuPercentMaximumFrequency = if ($null -ne $hardware.PSObject.Properties['CpuPercentMaximumFrequency']) { [double]$hardware.CpuPercentMaximumFrequency } else { $null }
+            NpuAvailable = $null -ne $hardware.PSObject.Properties['NpuAvailable'] -and [bool]$hardware.NpuAvailable
+            NpuUtilizationPercent = if ($null -ne $hardware.PSObject.Properties['NpuUtilizationPercent']) { [double]$hardware.NpuUtilizationPercent } else { $null }
+            NpuCounterSet = if ($null -ne $hardware.PSObject.Properties['NpuCounterSet']) { [string]$hardware.NpuCounterSet } else { '' }
+            DisplayModes = if ($null -ne $display.PSObject.Properties['Modes']) { @($display.Modes | ForEach-Object { "$($_.DeviceName):$($_.Width)x$($_.Height)@$($_.Frequency)Hz:$($_.BitsPerPixel)bpp" }) } else { @() }
+            DisplayScaling = if ($null -ne $display.PSObject.Properties['Scaling']) { @($display.Scaling | ForEach-Object { "$($_.GdiDeviceName):$($_.CurrentPercent)%" }) } else { @() }
+            DisplayDynamicRefresh = if ($null -ne $display.PSObject.Properties['DynamicRefresh']) { @($display.DynamicRefresh | ForEach-Object { "$($_.GdiDeviceName):enabled=$($_.Enabled):$($_.BaseFrequency)-$($_.BoostFrequency)Hz" }) } else { @() }
+            DisplayAdvancedColor = if ($null -ne $display.PSObject.Properties['AdvancedColor']) { @($display.AdvancedColor | ForEach-Object { "$($_.GdiDeviceName):enabled=$($_.Enabled):$($_.BitsPerColorChannel)bpc" }) } else { @() }
+            DisplayColorProfiles = if ($null -ne $display.PSObject.Properties['ColorProfiles']) { @($display.ColorProfiles | ForEach-Object { "$($_.GdiDeviceName):$([IO.Path]::GetFileName([string]$_.ProfilePath))" }) } else { @() }
+            DisplayBrightness = if ($null -ne $display.PSObject.Properties['Brightness']) { @($display.Brightness | ForEach-Object { "$($_.InstanceName):$($_.CurrentPercent)%" }) } else { @() }
+            DisplayPhysicalBrightness = if ($null -ne $display.PSObject.Properties['PhysicalBrightness']) { @($display.PhysicalBrightness | ForEach-Object { "$($_.GdiDeviceName)#$($_.PhysicalIndex):supported=$($_.Supported):$($_.CurrentPercent)%" }) } else { @() }
+            ExperimentLocked = [string]$Selection -eq 'Experiment'
             MonitorIntervalSeconds = if ($null -ne $timerVariable -and $null -ne $timerVariable.Value) { [Math]::Round([int]$timerVariable.Value.Interval / 1000.0, 1) } else { 0 }
             RefreshPolicy = $telemetryRefreshPolicy
             ForegroundProcess = [string]$AutomationState.ForegroundProcess
@@ -2486,6 +3312,9 @@ function Export-OpenSynapseDiagnostics {
     try {
         [IO.Directory]::CreateDirectory($staging) | Out-Null
         $gpu = try { [OpenSynapseNative.GpuTelemetry]::ReadLatest() } catch { $null }
+        $hardware = Get-HardwareTelemetrySnapshot $Snapshot -Force
+        $nvidia = Get-NvidiaHardwareSnapshot $Snapshot -Force
+        $display = Get-DisplayTelemetrySnapshot $Snapshot -Force
         $computerModel = try { (Get-CimInstance Win32_ComputerSystem -ErrorAction Stop).Model } catch { 'Unavailable' }
         $activePlanGuid = try { Get-ActivePlanGuid } catch { 'Unavailable' }
         $manifest = [pscustomobject][ordered]@{
@@ -2496,6 +3325,9 @@ function Export-OpenSynapseDiagnostics {
             PowerSnapshot = $Snapshot
             SmartAutomation = $AutomationState
             GpuTelemetry = $gpu
+            NvidiaTelemetry = $nvidia
+            HardwareTelemetry = $hardware
+            DisplayState = $display
             ActivePlanGuid = $activePlanGuid
             SafetyBoundary = 'Public Windows interfaces only; no EC, fan, TGP or MUX control.'
         }
@@ -2541,7 +3373,7 @@ function Invoke-QuietMaintenance {
 
 function Set-ActiveProfile {
     param(
-        [ValidateSet('Hyper', 'Balance', 'Quiet')][string]$Name,
+        [ValidateSet('Hyper', 'Balance', 'Quiet', 'Experiment')][string]$Name,
         [object]$State,
         [object]$Config,
         [switch]$Full,
@@ -2554,6 +3386,7 @@ function Set-ActiveProfile {
     $targetGuid = switch ($Name) {
         'Hyper' { [string]$State.HyperPlanGuid; break }
         'Balance' { [string]$State.BalancePlanGuid; break }
+        'Experiment' { [string]$State.ExperimentPlanGuid; break }
         default { [string]$State.QuietPlanGuid }
     }
     if ($Name -eq 'Hyper') {
@@ -2582,6 +3415,9 @@ function Set-ActiveProfile {
         Name = $Name
         PlanVerified = $verified
         ScaleChanges = [int]$displayResult.ScaleChanges
+        RefreshPolicy = [string]$displayResult.RefreshPolicy
+        EffectiveRefreshPolicy = [string]$displayResult.EffectiveRefreshPolicy
+        RefreshVerified = $displayResult.RefreshVerified
         RefreshWarning = [string]$displayResult.RefreshWarning
     }
 }
@@ -3033,13 +3869,16 @@ function Install-OpenSynapse {
     $hyperGuid = if ($null -ne $existing -and $existing.PSObject.Properties['HyperPlanGuid']) { [string]$existing.HyperPlanGuid } else { '' }
     $balanceGuid = if ($null -ne $existing -and $existing.PSObject.Properties['BalancePlanGuid']) { [string]$existing.BalancePlanGuid } else { '' }
     $quietGuid = if ($null -ne $existing -and $existing.PSObject.Properties['QuietPlanGuid']) { [string]$existing.QuietPlanGuid } else { '' }
+    $experimentGuid = if ($null -ne $existing -and $existing.PSObject.Properties['ExperimentPlanGuid']) { [string]$existing.ExperimentPlanGuid } else { '' }
     if (-not (Test-PlanExists $hyperGuid)) { $hyperGuid = New-CustomPlan 'OpenSynapse Hyper' 'AC maximum-performance policy.' }
     if (-not (Test-PlanExists $balanceGuid)) { $balanceGuid = New-CustomPlan 'OpenSynapse Balance' 'Responsive efficiency policy for battery and USB-C PD.' }
     if (-not (Test-PlanExists $quietGuid)) { $quietGuid = New-CustomPlan 'OpenSynapse Quiet' 'Battery endurance policy.' }
+    if (-not (Test-PlanExists $experimentGuid)) { $experimentGuid = New-CustomPlan 'OpenSynapse Experiment' 'Locked and reproducible visual research policy.' }
 
     Set-ProfilePolicy Hyper $hyperGuid
     Set-ProfilePolicy Balance $balanceGuid
     Set-ProfilePolicy Quiet $quietGuid
+    Set-ProfilePolicy Experiment $experimentGuid
 
     $disabledWakeDevices = [string[]]@()
     $servicesStoppedByUs = [string[]]@()
@@ -3051,15 +3890,18 @@ function Install-OpenSynapse {
     }
 
     $state = [pscustomobject][ordered]@{
-        Version = 10
+        Version = 11
         OriginalPlanGuid = $originalGuid
         HyperPlanGuid = $hyperGuid
         BalancePlanGuid = $balanceGuid
         QuietPlanGuid = $quietGuid
+        ExperimentPlanGuid = $experimentGuid
         DisabledWakeDevices = $disabledWakeDevices
         ServicesStoppedByUs = $servicesStoppedByUs
         AdvancedColorStates = $advancedColorStates
         CapturedBrightness = if ($null -ne $existing) { $existing.CapturedBrightness } else { $null }
+        DisplayStateSnapshot = if ($null -ne $existing) { $existing.DisplayStateSnapshot } else { $null }
+        ExperimentSession = if ($null -ne $existing) { $existing.ExperimentSession } else { $null }
         InstalledAt = (Get-Date).ToString('o')
     }
     Save-AppState $state
@@ -3145,7 +3987,7 @@ function Uninstall-OpenSynapse {
         $restoreGuid = [string]$state.OriginalPlanGuid
         if (-not (Test-PlanExists $restoreGuid)) { $restoreGuid = $script:Guids.Balanced }
         Invoke-PowerCfg @('/setactive', $restoreGuid) -AllowFailure | Out-Null
-        foreach ($property in @('HyperPlanGuid', 'BalancePlanGuid', 'QuietPlanGuid')) {
+        foreach ($property in @('HyperPlanGuid', 'BalancePlanGuid', 'QuietPlanGuid', 'ExperimentPlanGuid')) {
             $guid = [string]$state.$property
             if (Test-PlanExists $guid) { Invoke-PowerCfg @('/delete', $guid) -AllowFailure | Out-Null }
         }
@@ -3177,6 +4019,7 @@ function Get-ActiveProfileName {
     if ([string]::Equals($active, [string]$State.HyperPlanGuid, [StringComparison]::OrdinalIgnoreCase)) { return 'Hyper' }
     if ([string]::Equals($active, [string]$State.BalancePlanGuid, [StringComparison]::OrdinalIgnoreCase)) { return 'Balance' }
     if ([string]::Equals($active, [string]$State.QuietPlanGuid, [StringComparison]::OrdinalIgnoreCase)) { return 'Quiet' }
+    if ([string]::Equals($active, [string]$State.ExperimentPlanGuid, [StringComparison]::OrdinalIgnoreCase)) { return 'Experiment' }
     return 'Other'
 }
 
@@ -3222,7 +4065,7 @@ function Show-Status {
 }
 
 function Apply-ProfileOnce {
-    param([ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet')][string]$Selection)
+    param([ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet', 'Experiment')][string]$Selection)
     if (-not (Test-IsAdministrator)) { exit (Invoke-ElevatedOperation 'Apply' $Selection) }
     Add-UiAssemblies
     Import-NativeHelpers
@@ -3365,10 +4208,27 @@ function Get-DisplayStatusText {
             $lines.Add("$($scale.Role) scale: $($scale.CurrentPercent)% (target $target%, recommended $($scale.RecommendedPercent)%)")
         }
         foreach ($color in [OpenSynapseNative.AdvancedColorManager]::GetStatus()) {
-            $lines.Add("Advanced color: supported=$($color.Supported), enabled=$($color.Enabled), $($color.BitsPerColorChannel) bpc")
+            $lines.Add("Advanced color $($color.GdiDeviceName): supported=$($color.Supported), enabled=$($color.Enabled), $($color.BitsPerColorChannel) bpc")
         }
-        $dynamic = [OpenSynapseNative.DynamicRefreshManager]::GetStatus()
-        $lines.Add("Dynamic refresh: internalActive=$($dynamic.InternalDisplayActive), supported=$($dynamic.Supported), enabled=$($dynamic.Enabled), range=$($dynamic.BaseFrequency)-$($dynamic.BoostFrequency) Hz")
+        foreach ($profile in [OpenSynapseNative.ColorProfileManager]::GetStatus()) {
+            $lines.Add("ICC $($profile.GdiDeviceName): $(if ($profile.Available) { $profile.ProfilePath } else { "unavailable ($($profile.Error))" })")
+        }
+        foreach ($dynamic in [OpenSynapseNative.DynamicRefreshManager]::GetStatuses()) {
+            $lines.Add("Dynamic refresh $($dynamic.GdiDeviceName): internal=$($dynamic.IsInternal), supported=$($dynamic.Supported), enabled=$($dynamic.Enabled), range=$($dynamic.BaseFrequency)-$($dynamic.BoostFrequency) Hz")
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$script:LastPolicyVerification.VerifiedAtUtc)) {
+            $lines.Add("Policy verification: profile=$($script:LastPolicyVerification.Profile), plan=$($script:LastPolicyVerification.PlanVerified), requestedRefresh=$($script:LastPolicyVerification.RefreshPolicy), effectiveRefresh=$($script:LastPolicyVerification.EffectiveRefreshPolicy), refreshVerified=$($script:LastPolicyVerification.RefreshVerified), at=$($script:LastPolicyVerification.VerifiedAtUtc)")
+        }
+        foreach ($brightnessState in @(Get-MonitorBrightnessStates)) {
+            $lines.Add("Windows brightness $($brightnessState.InstanceName): $($brightnessState.CurrentPercent)%")
+        }
+        foreach ($brightnessState in @([OpenSynapseNative.PhysicalMonitorBrightnessManager]::GetStatus())) {
+            $endpoint = "$($brightnessState.GdiDeviceName)#$($brightnessState.PhysicalIndex)"
+            if ([bool]$brightnessState.Supported) {
+                $lines.Add("DDC/CI brightness ${endpoint}: $($brightnessState.CurrentPercent)% (raw $($brightnessState.Current)/$($brightnessState.Maximum))")
+            }
+            else { $lines.Add("DDC/CI brightness ${endpoint}: unavailable ($($brightnessState.Error))") }
+        }
         $hyperPolicy = Resolve-HyperCpuPolicy $Config
         $lines.Add("Hyper CPU: $($hyperPolicy.Name), EPP 0 on classes 0/1/2, minimum $($hyperPolicy.Minimum)/$($hyperPolicy.Minimum1)/$($hyperPolicy.Minimum2)%, unpark $($hyperPolicy.MinCores)/$($hyperPolicy.MinCores1)%")
         $automationVariable = Get-Variable -Name AutomationState -Scope Script -ErrorAction SilentlyContinue
@@ -3394,6 +4254,18 @@ function Get-DisplayStatusText {
         $gpuSnapshot = try { [OpenSynapseNative.GpuTelemetry]::ReadLatest() } catch { $null }
         if ($null -ne $gpuSnapshot -and [bool]$gpuSnapshot.Available) {
             $lines.Add("Windows GPU telemetry: total=$($gpuSnapshot.TotalUtilizationPercent)%, dGPU=$($gpuSnapshot.DiscreteUtilizationPercent)%, dGPU dedicated=$([Math]::Round($gpuSnapshot.DiscreteDedicatedBytes / 1MB, 1)) MB")
+        }
+        $hardware = Get-HardwareTelemetrySnapshot $powerSnapshot
+        if ($null -ne $hardware.PSObject.Properties['ThermalZones']) {
+            foreach ($zone in @($hardware.ThermalZones)) {
+                $lines.Add("Thermal $($zone.Name): $($zone.TemperatureC) C, throttleReasons=$($zone.ThrottleReasons)")
+            }
+            $cpuActualText = if ([double]$hardware.CpuActualFrequencyMhz -gt 0) { "$($hardware.CpuActualFrequencyMhz) MHz" } else { 'not exposed' }
+            $lines.Add("CPU frequency: actual=$cpuActualText, maximum ratio=$($hardware.CpuPercentMaximumFrequency)%")
+            if ([bool]$hardware.NpuAvailable) {
+                $lines.Add("NPU telemetry: $($hardware.NpuUtilizationPercent)%, counter=$($hardware.NpuCounterSet)")
+            }
+            else { $lines.Add('NPU telemetry: not exposed by an installed Windows performance counter set') }
         }
         $razerDevices = @(Get-RazerMouseDevices)
         if ($razerDevices.Count -eq 0) {
@@ -3422,9 +4294,9 @@ function Get-DisplayStatusText {
         $brightness = Get-InternalBrightness
         if ($null -ne $brightness) { $lines.Add("Internal brightness: $brightness%") }
         if ([string]$powerSnapshot.SupplyType -eq 'HighPowerAC') {
-            $nvidia = Get-NvidiaSnapshot
+            $nvidia = Get-NvidiaHardwareSnapshot $powerSnapshot
             if ($nvidia) {
-                $lines.Add("NVIDIA: $($nvidia.PState), $($nvidia.PowerW) W, display=$($nvidia.DisplayActive), enforced/default/max $($nvidia.EnforcedLimitW)/$($nvidia.DefaultLimitW)/$($nvidia.MaximumLimitW) W")
+                $lines.Add("NVIDIA: $($nvidia.PState), $($nvidia.PowerW) W, $($nvidia.TemperatureC) C, clocks=$($nvidia.GraphicsClockMhz)/$($nvidia.MemoryClockMhz) MHz, throttle=$($nvidia.ThrottleReasons), display=$($nvidia.DisplayActive), enforced/default/max $($nvidia.EnforcedLimitW)/$($nvidia.DefaultLimitW)/$($nvidia.MaximumLimitW) W")
             }
         }
         else { $lines.Add('NVIDIA vendor probe: skipped on portable power to avoid waking the dGPU') }
@@ -3526,7 +4398,7 @@ function Start-TrayApplication {
         $currentGuid = Get-ActivePlanGuid
         $script:State = [pscustomobject]@{
             OriginalPlanGuid = $currentGuid; HyperPlanGuid = $currentGuid; BalancePlanGuid = $currentGuid
-            QuietPlanGuid = '00000000-0000-0000-0000-000000000000'
+            QuietPlanGuid = '00000000-0000-0000-0000-000000000000'; ExperimentPlanGuid = $currentGuid
             DisabledWakeDevices = @(); ServicesStoppedByUs = @(); AdvancedColorStates = @(); CapturedBrightness = $null
         }
         $script:Config = Get-DefaultConfig
@@ -3550,6 +4422,15 @@ function Start-TrayApplication {
     $script:PowerEventsCoalesced = 0
     $script:PowerEventTriggeredProbes = 0
     $script:LastPlanVerification = [DateTime]::MinValue
+    $script:LastPolicyVerification = [pscustomobject][ordered]@{
+        Profile = ''
+        PlanVerified = $false
+        RefreshPolicy = ''
+        EffectiveRefreshPolicy = ''
+        RefreshVerified = $null
+        RefreshWarning = ''
+        VerifiedAtUtc = ''
+    }
     $script:LastAppliedBrightnessTarget = $null
     $script:LastAppliedQuietCpuMax = $null
     $script:LastAppliedHyperCpuPolicy = $null
@@ -3618,6 +4499,7 @@ function Start-TrayApplication {
     $script:HyperMenu = $menu.Items.Add('Lock Hyper (manual override)')
     $script:BalanceMenu = $menu.Items.Add('Lock Balance (battery >= 50%)')
     $script:QuietMenu = $menu.Items.Add('Lock Eco')
+    $script:ExperimentMenu = $menu.Items.Add('Lock Experiment (verified display state)')
     $script:TemporaryMenu = $menu.Items.Add('Temporary mode')
     $script:TemporaryHyperMenu = $script:TemporaryMenu.DropDownItems.Add('Hyper for 30 minutes')
     $script:TemporaryBalanceMenu = $script:TemporaryMenu.DropDownItems.Add('Balance for 30 minutes')
@@ -3851,7 +4733,7 @@ function Start-TrayApplication {
 
     $autoButton = New-Object Windows.Forms.Button
     $autoButton.Text = 'Auto'
-    $autoButton.Size = New-Object Drawing.Size(222, 44)
+    $autoButton.Size = New-Object Drawing.Size(176, 44)
     $autoButton.Location = New-Object Drawing.Point(40, 196)
     $autoButton.Font = New-Object Drawing.Font('Segoe UI', 9, [Drawing.FontStyle]::Bold)
     Set-RazerButtonStyle $autoButton $true
@@ -3859,27 +4741,35 @@ function Start-TrayApplication {
 
     $hyperButton = New-Object Windows.Forms.Button
     $hyperButton.Text = 'Hyper'
-    $hyperButton.Size = New-Object Drawing.Size(222, 44)
-    $hyperButton.Location = New-Object Drawing.Point(274, 196)
+    $hyperButton.Size = New-Object Drawing.Size(176, 44)
+    $hyperButton.Location = New-Object Drawing.Point(226, 196)
     $hyperButton.Font = New-Object Drawing.Font('Segoe UI', 9, [Drawing.FontStyle]::Bold)
     Set-RazerButtonStyle $hyperButton $false
     $pageDashboard.Controls.Add($hyperButton)
 
     $balanceButton = New-Object Windows.Forms.Button
     $balanceButton.Text = 'Balance'
-    $balanceButton.Size = New-Object Drawing.Size(222, 44)
-    $balanceButton.Location = New-Object Drawing.Point(508, 196)
+    $balanceButton.Size = New-Object Drawing.Size(176, 44)
+    $balanceButton.Location = New-Object Drawing.Point(412, 196)
     $balanceButton.Font = New-Object Drawing.Font('Segoe UI', 9, [Drawing.FontStyle]::Bold)
     Set-RazerButtonStyle $balanceButton $false
     $pageDashboard.Controls.Add($balanceButton)
 
     $quietButton = New-Object Windows.Forms.Button
     $quietButton.Text = 'Eco'
-    $quietButton.Size = New-Object Drawing.Size(222, 44)
-    $quietButton.Location = New-Object Drawing.Point(742, 196)
+    $quietButton.Size = New-Object Drawing.Size(176, 44)
+    $quietButton.Location = New-Object Drawing.Point(598, 196)
     $quietButton.Font = New-Object Drawing.Font('Segoe UI', 9, [Drawing.FontStyle]::Bold)
     Set-RazerButtonStyle $quietButton $false
     $pageDashboard.Controls.Add($quietButton)
+
+    $experimentButton = New-Object Windows.Forms.Button
+    $experimentButton.Text = 'Experiment'
+    $experimentButton.Size = New-Object Drawing.Size(176, 44)
+    $experimentButton.Location = New-Object Drawing.Point(784, 196)
+    $experimentButton.Font = New-Object Drawing.Font('Segoe UI', 9, [Drawing.FontStyle]::Bold)
+    Set-RazerButtonStyle $experimentButton $false
+    $pageDashboard.Controls.Add($experimentButton)
 
     $automationPanel = New-Object Windows.Forms.Panel
     $automationPanel.Location = New-Object Drawing.Point(40, 264)
@@ -3964,6 +4854,8 @@ function Start-TrayApplication {
     $script:StatusSupplyValue = New-StatusRow 'Supply' 308
     $script:StatusDgpuValue = New-StatusRow 'dGPU' 352
     $script:StatusHealthValue = New-StatusRow 'Health' 396
+    $script:StatusThermalValue = New-StatusRow 'Thermal' 440
+    $script:StatusNpuValue = New-StatusRow 'NPU' 484
 
     # Game mode
     New-PageHeading $pageGame 'GAME MODE' 'Workload-aware automation, Hyper tuning and temporary overrides'
@@ -4324,6 +5216,13 @@ function Start-TrayApplication {
     Set-RazerButtonStyle $exportButton $true
     $pageDiagnostics.Controls.Add($exportButton)
 
+    $experimentReportButton = New-Object Windows.Forms.Button
+    $experimentReportButton.Text = 'Experiment report'
+    $experimentReportButton.Location = New-Object Drawing.Point(760, 756)
+    $experimentReportButton.Size = New-Object Drawing.Size(220, 42)
+    Set-RazerButtonStyle $experimentReportButton $false
+    $pageDiagnostics.Controls.Add($experimentReportButton)
+
     # About
     New-PageHeading $pageAbout 'ABOUT' 'OpenSynapse safe power and display policy controller'
     $aboutLogo = New-Object Windows.Forms.PictureBox
@@ -4386,6 +5285,12 @@ function Start-TrayApplication {
     }
 
     function Set-TemporaryProfile([ValidateSet('Hyper', 'Balance', 'Quiet')][string]$ProfileName, [int]$Minutes = 30, [bool]$EndOnSupplyChange = $false) {
+        if ([string]$script:Config.Selection -eq 'Experiment') {
+            $script:TrayIcon.BalloonTipTitle = 'Experiment is locked'
+            $script:TrayIcon.BalloonTipText = 'End Experiment before applying a temporary power override.'
+            $script:TrayIcon.ShowBalloonTip(3000)
+            return
+        }
         $snapshot = Get-PowerSnapshot -UseCachedAdapter
         if ($ProfileName -eq 'Hyper' -and [string]$snapshot.SupplyType -ne 'HighPowerAC') {
             $answer = [Windows.Forms.MessageBox]::Show(
@@ -4602,6 +5507,8 @@ function Start-TrayApplication {
         $script:HyperMenu.Checked = ([string]$script:Config.Selection -eq 'Hyper')
         $script:BalanceMenu.Checked = ([string]$script:Config.Selection -eq 'Balance')
         $script:QuietMenu.Checked = ([string]$script:Config.Selection -eq 'Quiet')
+        $script:ExperimentMenu.Checked = ([string]$script:Config.Selection -eq 'Experiment')
+        $script:TemporaryMenu.Enabled = ([string]$script:Config.Selection -ne 'Experiment')
         if (-not $script:Form.Visible -and -not $captureUi) { return }
         $script:PowerLabel.Text = "Power: $sourceText$batteryText$batteryRateText$limitText$quietCpuText$hyperCpuText"
         $temporaryDisplayName = if ($temporaryProfile -eq 'Quiet') { 'Eco' } else { $temporaryProfile }
@@ -4624,10 +5531,21 @@ function Start-TrayApplication {
             [Drawing.Color]::FromArgb(255, 180, 65)
         } else { $script:TextLight }
         $script:StatusHealthValue.Text = $healthText
+        $hardwareStatus = Get-HardwareTelemetrySnapshot $snapshot
+        $script:StatusThermalValue.Text = if ($null -ne $hardwareStatus.PSObject.Properties['MaximumTemperatureC'] -and [double]$hardwareStatus.MaximumTemperatureC -gt 0) {
+            "$($hardwareStatus.MaximumTemperatureC) C"
+        } else { 'Unavailable' }
+        $script:StatusThermalValue.ForeColor = if ($null -ne $hardwareStatus.PSObject.Properties['ThermalThrottlingDetected'] -and [bool]$hardwareStatus.ThermalThrottlingDetected) {
+            [Drawing.Color]::FromArgb(255, 180, 65)
+        } else { $script:TextLight }
+        $script:StatusNpuValue.Text = if ($null -ne $hardwareStatus.PSObject.Properties['NpuAvailable'] -and [bool]$hardwareStatus.NpuAvailable) {
+            "$($hardwareStatus.NpuUtilizationPercent)%"
+        } else { 'Not exposed' }
         Set-RazerButtonStyle $autoButton ([string]$script:Config.Selection -eq 'Auto')
         Set-RazerButtonStyle $hyperButton ([string]$script:Config.Selection -eq 'Hyper')
         Set-RazerButtonStyle $balanceButton ([string]$script:Config.Selection -eq 'Balance')
         Set-RazerButtonStyle $quietButton ([string]$script:Config.Selection -eq 'Quiet')
+        Set-RazerButtonStyle $experimentButton ([string]$script:Config.Selection -eq 'Experiment')
         if ($script:RuntimeHealth -eq 'Recovering') {
             $script:PolicyHintLabel.Text = "Automatic monitoring is recovering after $script:ConsecutiveMonitorFailures failure(s); retry interval $($script:Timer.Interval / 1000)s."
             $script:PolicyHintLabel.ForeColor = [Drawing.Color]::FromArgb(255, 180, 65)
@@ -4635,6 +5553,11 @@ function Start-TrayApplication {
         elseif ([string]$script:Config.Selection -eq 'Hyper' -and $snapshot.SupplyType -ne 'HighPowerAC') {
             $script:PolicyHintLabel.Text = 'Warning: Hyper is manually overriding a battery, PD or unverified adapter; performance may be power-limited.'
             $script:PolicyHintLabel.ForeColor = [Drawing.Color]::FromArgb(255, 180, 65)
+        }
+        elseif ([string]$script:Config.Selection -eq 'Experiment') {
+            $verificationAge = [Math]::Round(((Get-Date) - $script:LastExperimentVerificationAt).TotalSeconds)
+            $script:PolicyHintLabel.Text = "Experiment locked: fixed $($script:Config.ExperimentRefreshRate) Hz, ICC/HDR/DRR/scaling/brightness baseline enforced; Auto, temporary overrides and supply switching are paused. Last verification ${verificationAge}s ago."
+            $script:PolicyHintLabel.ForeColor = $script:RazerGreen
         }
         elseif ([bool]$script:AutomationState.BatteryHighDrainDetected) {
             $highDrainNames = [string[]]@($script:AutomationState.BatteryHighDrainProcesses | ForEach-Object { "$($_.ProcessName) $($_.CpuPercentOneCore)%" })
@@ -4747,6 +5670,15 @@ function Start-TrayApplication {
             $result = Set-ActiveProfile $desired $script:State $script:Config -Full:$Full -ApplyVisualPolicy:$ApplyVisualPolicy -ApplyRefreshPolicy:$ApplyRefreshPolicy -RepairScaling:$RepairScaling -Snapshot $snapshot
             $script:LastPlanVerification = Get-Date
             $script:LastVerifiedActiveProfile = $desired
+            $script:LastPolicyVerification = [pscustomobject][ordered]@{
+                Profile = $desired
+                PlanVerified = [bool]$result.PlanVerified
+                RefreshPolicy = [string]$result.RefreshPolicy
+                EffectiveRefreshPolicy = [string]$result.EffectiveRefreshPolicy
+                RefreshVerified = $result.RefreshVerified
+                RefreshWarning = [string]$result.RefreshWarning
+                VerifiedAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+            }
             $script:LastPowerSource = $snapshot.Source
             $script:LastSupplyType = $snapshot.SupplyType
             $script:LastDesiredProfile = $desired
@@ -4787,7 +5719,7 @@ function Start-TrayApplication {
         finally { $script:ApplyInProgress = $false }
     }
 
-    function Set-SelectionFromUi([ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet')][string]$Selection) {
+    function Set-SelectionFromUi([ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet', 'Experiment')][string]$Selection) {
         $snapshot = Get-PowerSnapshot -UseCachedAdapter
         $previousSelection = [string]$script:Config.Selection
         if ($Selection -eq 'Hyper' -and $snapshot.SupplyType -ne 'HighPowerAC') {
@@ -4807,10 +5739,51 @@ function Start-TrayApplication {
             }
         }
         Clear-TemporaryOverride 'replaced by a persistent selection'
-        $script:Config.Selection = $Selection
-        Save-AppConfig $script:Config
-        $ecoTransition = $Selection -eq 'Quiet' -or $previousSelection -eq 'Quiet'
-        Apply-CurrentSelection -Full -ApplyVisualPolicy:$ecoTransition -ApplyRefreshPolicy:$ecoTransition -Notify
+        $newExperimentSession = $false
+        $experimentClosed = $false
+        try {
+            if ($previousSelection -eq 'Experiment' -and $Selection -ne 'Experiment') {
+                $restore = Stop-ExperimentSession $script:Config $script:State $snapshot $script:AutomationState
+                if (-not [bool]$restore.Verified) {
+                    throw "Experiment display state could not be restored: $($restore.Differences -join '; ')"
+                }
+                $experimentClosed = $true
+            }
+            if ($Selection -eq 'Experiment' -and $previousSelection -ne 'Experiment') {
+                $newExperimentSession = Initialize-ExperimentSession $script:State
+            }
+            $script:Config.Selection = $Selection
+            Save-AppConfig $script:Config
+            $visualTransition = $Selection -in @('Quiet', 'Experiment') -or $previousSelection -in @('Quiet', 'Experiment')
+            $null = Apply-CurrentSelection -Full -ApplyVisualPolicy:$visualTransition -ApplyRefreshPolicy:$visualTransition -Notify -ThrowOnError
+            if ($Selection -eq 'Experiment') {
+                Complete-ExperimentSessionStart $script:Config $script:State $snapshot $script:AutomationState -NewSession:$newExperimentSession
+            }
+        }
+        catch {
+            $selectionError = $_.Exception.Message
+            Write-AppLog "Selection change to $Selection failed: $selectionError"
+            if ($Selection -eq 'Experiment' -and $null -ne $script:State.ExperimentSession) {
+                try {
+                    $null = Restore-DisplayStateSnapshot $script:State.ExperimentSession.OriginalDisplayState
+                    $script:State.ExperimentSession = $null
+                    Save-AppState $script:State
+                }
+                catch { Write-AppLog "Experiment entry rollback failed: $($_.Exception.Message)" }
+            }
+            # Once a prior Experiment session has been successfully closed, its
+            # lock cannot be represented by merely restoring the old selection
+            # string. Fall back to Auto and apply it; all other failures restore
+            # the prior selection and its verified power/display policy.
+            $rollbackSelection = if ($experimentClosed) { 'Auto' } else { $previousSelection }
+            $script:Config.Selection = $rollbackSelection
+            Save-AppConfig $script:Config
+            try {
+                $null = Apply-CurrentSelection -Full -ApplyVisualPolicy -ApplyRefreshPolicy -Snapshot $snapshot -ThrowOnError -SilentError
+            }
+            catch { Write-AppLog "Selection rollback to $rollbackSelection also failed: $($_.Exception.Message)" }
+            [Windows.Forms.MessageBox]::Show($selectionError, 'OpenSynapse Experiment', 'OK', 'Error') | Out-Null
+        }
     }
 
     function Save-OptionControls {
@@ -4866,10 +5839,12 @@ function Start-TrayApplication {
     $hyperButton.Add_Click({ Set-SelectionFromUi Hyper })
     $balanceButton.Add_Click({ Set-SelectionFromUi Balance })
     $quietButton.Add_Click({ Set-SelectionFromUi Quiet })
+    $experimentButton.Add_Click({ Set-SelectionFromUi Experiment })
     $script:AutoMenu.Add_Click({ Set-SelectionFromUi Auto })
     $script:HyperMenu.Add_Click({ Set-SelectionFromUi Hyper })
     $script:BalanceMenu.Add_Click({ Set-SelectionFromUi Balance })
     $script:QuietMenu.Add_Click({ Set-SelectionFromUi Quiet })
+    $script:ExperimentMenu.Add_Click({ Set-SelectionFromUi Experiment })
     $script:TemporaryHyperMenu.Add_Click({ Set-TemporaryProfile Hyper 30 $false })
     $script:TemporaryBalanceMenu.Add_Click({ Set-TemporaryProfile Balance 30 $false })
     $script:TemporaryQuietMenu.Add_Click({ Set-TemporaryProfile Quiet 30 $false })
@@ -4892,6 +5867,21 @@ function Start-TrayApplication {
                 [Windows.Forms.MessageBox]::Show("Diagnostics exported to:`r`n$path", 'OpenSynapse', 'OK', 'Information') | Out-Null
             }
             catch { [Windows.Forms.MessageBox]::Show("Diagnostic export failed:`r`n$($_.Exception.Message)", 'OpenSynapse', 'OK', 'Error') | Out-Null }
+        }
+        $dialog.Dispose()
+    })
+    $experimentReportButton.Add_Click({
+        $dialog = New-Object Windows.Forms.SaveFileDialog
+        $dialog.Title = 'Export OpenSynapse experiment environment report'
+        $dialog.Filter = 'JSON report (*.json)|*.json'
+        $dialog.FileName = "OpenSynapse-experiment-$((Get-Date).ToString('yyyyMMdd-HHmmss')).json"
+        if ($dialog.ShowDialog($script:Form) -eq [Windows.Forms.DialogResult]::OK) {
+            try {
+                $snapshot = Get-PowerSnapshot -UseCachedAdapter
+                $report = Export-ExperimentEnvironmentReport $script:Config $script:State $snapshot $script:AutomationState Manual $dialog.FileName
+                [Windows.Forms.MessageBox]::Show("Experiment report exported to:`r`n$($report.JsonPath)`r`n$($report.HtmlPath)", 'OpenSynapse', 'OK', 'Information') | Out-Null
+            }
+            catch { [Windows.Forms.MessageBox]::Show("Experiment report failed:`r`n$($_.Exception.Message)", 'OpenSynapse', 'OK', 'Error') | Out-Null }
         }
         $dialog.Dispose()
     })
@@ -4974,6 +5964,10 @@ function Start-TrayApplication {
 
     $exitAction = {
         try {
+            $exitSnapshot = Get-PowerSnapshot -UseCachedAdapter
+            if ($null -ne $script:State.ExperimentSession) {
+                $null = Stop-ExperimentSession $script:Config $script:State $exitSnapshot $script:AutomationState
+            }
             Restore-WakeDevices $script:State
             Restore-QuietServices $script:State
             Restore-DisplayPolicy $script:State
@@ -5161,6 +6155,7 @@ function Start-TrayApplication {
         $expectedGuid = switch ($desired) {
             'Hyper' { [string]$script:State.HyperPlanGuid; break }
             'Balance' { [string]$script:State.BalancePlanGuid; break }
+            'Experiment' { [string]$script:State.ExperimentPlanGuid; break }
             default { [string]$script:State.QuietPlanGuid }
         }
         $planOverridden = $false
@@ -5206,6 +6201,9 @@ function Start-TrayApplication {
             try { Apply-ManagedBrightness Quiet $script:Config $script:State $snapshot }
             catch { Write-AppLog "Adaptive Quiet brightness failed: $($_.Exception.Message)" }
         }
+        elseif ($desired -eq 'Experiment') {
+            $null = Test-AndRepairExperimentEnvironment $script:Config $script:State $snapshot $script:AutomationState
+        }
 
         if (((Get-Date) - $script:LastTelemetryRecord).TotalSeconds -ge 30) {
             # Set-ActiveProfile verifies every transition and the monitor checks the
@@ -5223,7 +6221,18 @@ function Start-TrayApplication {
         if ((Get-Date) -ge $script:PendingDisplayRepairAt) {
             $script:PendingDisplayRepairAt = [DateTime]::MaxValue
             try {
-                $null = Apply-CurrentSelection -Full -ApplyVisualPolicy -RepairScaling -Snapshot $snapshot -AutomationAlreadyUpdated -ThrowOnError -SilentError
+                if ([string]$script:Config.Selection -eq 'Experiment') {
+                    $script:LastExperimentVerificationAt = [DateTime]::MinValue
+                    $experimentCheck = Test-AndRepairExperimentEnvironment $script:Config $script:State $snapshot $script:AutomationState
+                    if ($null -ne $experimentCheck -and -not [bool]$experimentCheck.Valid) {
+                        $script:TrayIcon.BalloonTipTitle = 'Experiment environment changed'
+                        $script:TrayIcon.BalloonTipText = 'The display topology or a locked display property changed and could not be fully restored. Review Diagnostics before continuing data collection.'
+                        $script:TrayIcon.ShowBalloonTip(6000)
+                    }
+                }
+                else {
+                    $null = Apply-CurrentSelection -Full -ApplyVisualPolicy -RepairScaling -Snapshot $snapshot -AutomationAlreadyUpdated -ThrowOnError -SilentError
+                }
             }
             catch {
                 $script:PendingDisplayRepairAt = (Get-Date).AddSeconds(10)
@@ -5343,9 +6352,23 @@ function Start-TrayApplication {
     }
     Write-AppLog "Tray started. Version=$script:AppVersion Selection=$($script:Config.Selection) Dpi=$script:DpiMode seamlessModeSwitching=$($script:Config.SeamlessModeSwitching)"
     $startupEcoSelected = $startupSelectionBeforeSupplyTransition -eq 'Quiet'
-    $applyStartupRefresh = [string]$script:Config.RefreshPolicy -eq 'Auto'
+    $startupExperiment = [string]$script:Config.Selection -eq 'Experiment'
+    $newStartupExperiment = $false
+    if ($startupExperiment) {
+        $newStartupExperiment = Initialize-ExperimentSession $script:State
+        if (-not $newStartupExperiment -and $null -ne $script:State.ExperimentSession.BaselineDisplayState) {
+            $startupRestore = Restore-DisplayStateSnapshot $script:State.ExperimentSession.BaselineDisplayState
+            if (-not [bool]$startupRestore.Verified) {
+                throw "The locked Experiment display state could not be restored at startup: $($startupRestore.Differences -join '; ')"
+            }
+        }
+    }
+    $applyStartupRefresh = [string]$script:Config.RefreshPolicy -eq 'Auto' -or $startupExperiment
     Write-AppLog "Startup profile apply beginning: selection=$($script:Config.Selection) supply=$($startupSnapshot.SupplyType) refresh=$($script:Config.RefreshPolicy)."
-    Apply-CurrentSelection -Full -ApplyVisualPolicy:$startupEcoSelected -ApplyRefreshPolicy:($applyStartupRefresh -or $startupEcoSelected) -Snapshot $startupSnapshot
+    Apply-CurrentSelection -Full -ApplyVisualPolicy:($startupEcoSelected -or $startupExperiment) -ApplyRefreshPolicy:($applyStartupRefresh -or $startupEcoSelected) -Snapshot $startupSnapshot
+    if ($startupExperiment) {
+        Complete-ExperimentSessionStart $script:Config $script:State $startupSnapshot $script:AutomationState -NewSession:$newStartupExperiment
+    }
     Write-AppLog 'Startup profile apply completed.'
     $script:Timer.Start()
     $script:Form.Add_Shown({

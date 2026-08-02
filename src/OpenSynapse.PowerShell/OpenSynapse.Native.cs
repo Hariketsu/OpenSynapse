@@ -1217,6 +1217,7 @@ namespace OpenSynapseNative
         public int AdapterHighPart { get; internal set; }
         public uint SourceId { get; internal set; }
         public uint OutputTechnology { get; internal set; }
+        public string GdiDeviceName { get; internal set; }
         public bool IsInternal { get; internal set; }
         public int MinimumPercent { get; internal set; }
         public int CurrentPercent { get; internal set; }
@@ -1242,6 +1243,7 @@ namespace OpenSynapseNative
         private const int ERROR_INSUFFICIENT_BUFFER = 122;
         private const int DISPLAYCONFIG_DEVICE_INFO_GET_DPI_SCALE = -3;
         private const int DISPLAYCONFIG_DEVICE_INFO_SET_DPI_SCALE = -4;
+        private const int DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME = 1;
 
         private static readonly int[] DpiValues =
         {
@@ -1394,6 +1396,13 @@ namespace OpenSynapseNative
             public int scaleRel;
         }
 
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct DISPLAYCONFIG_SOURCE_DEVICE_NAME
+        {
+            public DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string viewGdiDeviceName;
+        }
+
         [DllImport("user32.dll")]
         private static extern int GetDisplayConfigBufferSizes(
             uint flags,
@@ -1416,6 +1425,10 @@ namespace OpenSynapseNative
         [DllImport("user32.dll", EntryPoint = "DisplayConfigSetDeviceInfo")]
         private static extern int DisplayConfigSetDpiInfo(
             ref DISPLAYCONFIG_SOURCE_DPI_SCALE_SET requestPacket);
+
+        [DllImport("user32.dll", EntryPoint = "DisplayConfigGetDeviceInfo")]
+        private static extern int DisplayConfigGetSourceName(
+            ref DISPLAYCONFIG_SOURCE_DEVICE_NAME requestPacket);
 
         private static bool IsBuiltIn(uint outputTechnology)
         {
@@ -1444,6 +1457,19 @@ namespace OpenSynapseNative
             if (result != ERROR_SUCCESS)
                 throw new Win32Exception(result, "Cannot read per-monitor DPI scaling.");
             return packet;
+        }
+
+        private static string GetSourceName(LUID adapterId, uint sourceId)
+        {
+            DISPLAYCONFIG_SOURCE_DEVICE_NAME packet = new DISPLAYCONFIG_SOURCE_DEVICE_NAME();
+            packet.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+            packet.header.size = (uint)Marshal.SizeOf(typeof(DISPLAYCONFIG_SOURCE_DEVICE_NAME));
+            packet.header.adapterId = adapterId;
+            packet.header.id = sourceId;
+            packet.viewGdiDeviceName = String.Empty;
+            return DisplayConfigGetSourceName(ref packet) == ERROR_SUCCESS
+                ? packet.viewGdiDeviceName ?? String.Empty
+                : String.Empty;
         }
 
         public static DisplayScaleInfo[] GetActiveDisplays()
@@ -1487,6 +1513,7 @@ namespace OpenSynapseNative
                     info.AdapterHighPart = path.sourceInfo.adapterId.HighPart;
                     info.SourceId = path.sourceInfo.id;
                     info.OutputTechnology = path.targetInfo.outputTechnology;
+                    info.GdiDeviceName = GetSourceName(path.sourceInfo.adapterId, path.sourceInfo.id);
                     info.IsInternal = IsBuiltIn(path.targetInfo.outputTechnology);
                     info.MinimumPercent = ValueAtRelativeIndex(recommendedIndex, dpi.minScaleRel);
                     info.CurrentPercent = ValueAtRelativeIndex(recommendedIndex, dpi.curScaleRel);
@@ -1539,9 +1566,18 @@ namespace OpenSynapseNative
     {
         public string DeviceName { get; internal set; }
         public string FriendlyName { get; internal set; }
+        public string DeviceId { get; internal set; }
+        public string DeviceKey { get; internal set; }
+        public string MonitorName { get; internal set; }
+        public string MonitorDeviceId { get; internal set; }
+        public string MonitorDeviceKey { get; internal set; }
         public int Width { get; internal set; }
         public int Height { get; internal set; }
+        public int BitsPerPixel { get; internal set; }
         public int Frequency { get; internal set; }
+        public int PositionX { get; internal set; }
+        public int PositionY { get; internal set; }
+        public int Orientation { get; internal set; }
         public bool IsPrimary { get; internal set; }
     }
 
@@ -1551,6 +1587,12 @@ namespace OpenSynapseNative
         private const int DISP_CHANGE_SUCCESSFUL = 0;
         private const int DISPLAY_DEVICE_ATTACHED_TO_DESKTOP = 0x1;
         private const int DISPLAY_DEVICE_PRIMARY_DEVICE = 0x4;
+        private const int DM_POSITION = 0x00000020;
+        private const int DM_DISPLAYORIENTATION = 0x00000080;
+        private const int DM_BITSPERPEL = 0x00040000;
+        private const int DM_PELSWIDTH = 0x00080000;
+        private const int DM_PELSHEIGHT = 0x00100000;
+        private const int DM_DISPLAYFREQUENCY = 0x00400000;
 
         [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
         private struct DISPLAY_DEVICE
@@ -1647,9 +1689,29 @@ namespace OpenSynapseNative
                 DisplayModeInfo info = new DisplayModeInfo();
                 info.DeviceName = device.DeviceName;
                 info.FriendlyName = device.DeviceString;
+                info.DeviceId = device.DeviceID;
+                info.DeviceKey = device.DeviceKey;
+                DISPLAY_DEVICE monitor = new DISPLAY_DEVICE();
+                monitor.cb = Marshal.SizeOf(typeof(DISPLAY_DEVICE));
+                if (EnumDisplayDevices(device.DeviceName, 0, ref monitor, 0))
+                {
+                    info.MonitorName = monitor.DeviceString ?? String.Empty;
+                    info.MonitorDeviceId = monitor.DeviceID ?? String.Empty;
+                    info.MonitorDeviceKey = monitor.DeviceKey ?? String.Empty;
+                }
+                else
+                {
+                    info.MonitorName = String.Empty;
+                    info.MonitorDeviceId = String.Empty;
+                    info.MonitorDeviceKey = String.Empty;
+                }
                 info.Width = current.dmPelsWidth;
                 info.Height = current.dmPelsHeight;
+                info.BitsPerPixel = current.dmBitsPerPel;
                 info.Frequency = current.dmDisplayFrequency;
+                info.PositionX = current.dmPositionX;
+                info.PositionY = current.dmPositionY;
+                info.Orientation = current.dmDisplayOrientation;
                 info.IsPrimary = (device.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) != 0;
                 result.Add(info);
             }
@@ -1834,6 +1896,68 @@ namespace OpenSynapseNative
             return new List<int>(rates).ToArray();
         }
 
+        public static bool RestoreMode(string deviceName, int width, int height, int bitsPerPixel,
+            int frequency, int positionX, int positionY, int orientation)
+        {
+            DISPLAY_DEVICE selectedDevice = new DISPLAY_DEVICE();
+            bool foundDevice = false;
+            foreach (DISPLAY_DEVICE device in GetActiveDevices())
+            {
+                if (!String.Equals(device.DeviceName, deviceName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                selectedDevice = device;
+                foundDevice = true;
+                break;
+            }
+            if (!foundDevice)
+                throw new InvalidOperationException(deviceName + " is not an active display.");
+
+            DEVMODE current = NewMode();
+            if (!EnumDisplaySettingsEx(selectedDevice.DeviceName, ENUM_CURRENT_SETTINGS, ref current, 0))
+                throw new Win32Exception("Cannot read the current display mode for " + deviceName + ".");
+            if (current.dmPelsWidth == width && current.dmPelsHeight == height &&
+                current.dmBitsPerPel == bitsPerPixel && Math.Abs(current.dmDisplayFrequency - frequency) <= 1 &&
+                current.dmPositionX == positionX && current.dmPositionY == positionY &&
+                current.dmDisplayOrientation == orientation)
+                return false;
+
+            DEVMODE selected = NewMode();
+            bool foundMode = false;
+            for (int index = 0; ; index++)
+            {
+                DEVMODE candidate = NewMode();
+                if (!EnumDisplaySettingsEx(selectedDevice.DeviceName, index, ref candidate, 0))
+                    break;
+                if (candidate.dmPelsWidth == width && candidate.dmPelsHeight == height &&
+                    candidate.dmBitsPerPel == bitsPerPixel && Math.Abs(candidate.dmDisplayFrequency - frequency) <= 1)
+                {
+                    selected = candidate;
+                    foundMode = true;
+                    break;
+                }
+            }
+            if (!foundMode)
+                throw new InvalidOperationException(deviceName + " no longer exposes its captured display mode.");
+
+            selected.dmPositionX = positionX;
+            selected.dmPositionY = positionY;
+            selected.dmDisplayOrientation = orientation;
+            selected.dmFields |= DM_POSITION | DM_DISPLAYORIENTATION | DM_BITSPERPEL |
+                DM_PELSWIDTH | DM_PELSHEIGHT | DM_DISPLAYFREQUENCY;
+            int change = ChangeDisplaySettingsEx(selectedDevice.DeviceName, ref selected, IntPtr.Zero, 0, IntPtr.Zero);
+            if (change != DISP_CHANGE_SUCCESSFUL)
+                throw new Win32Exception(change, "Cannot restore the captured mode for " + deviceName + ".");
+
+            DEVMODE verified = NewMode();
+            if (!EnumDisplaySettingsEx(selectedDevice.DeviceName, ENUM_CURRENT_SETTINGS, ref verified, 0) ||
+                verified.dmPelsWidth != width || verified.dmPelsHeight != height ||
+                verified.dmBitsPerPel != bitsPerPixel || Math.Abs(verified.dmDisplayFrequency - frequency) > 1 ||
+                verified.dmPositionX != positionX || verified.dmPositionY != positionY ||
+                verified.dmDisplayOrientation != orientation)
+                throw new InvalidOperationException("Windows accepted but did not retain the captured mode for " + deviceName + ".");
+            return true;
+        }
+
         public static void RestoreRegistryModes()
         {
             foreach (DISPLAY_DEVICE device in GetActiveDevices())
@@ -1843,6 +1967,9 @@ namespace OpenSynapseNative
 
     public sealed class DynamicRefreshInfo
     {
+        public string Key { get; internal set; }
+        public string GdiDeviceName { get; internal set; }
+        public bool IsInternal { get; internal set; }
         public bool InternalDisplayActive { get; internal set; }
         public bool Supported { get; internal set; }
         public bool Enabled { get; internal set; }
@@ -1961,7 +2088,28 @@ namespace OpenSynapseNative
 
         private static bool IsInternal(PATH_INFO path)
         {
-            return path.targetInfo.outputTechnology == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INTERNAL;
+            uint technology = path.targetInfo.outputTechnology;
+            return technology == 6u || technology == 11u || technology == 13u ||
+                technology == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INTERNAL;
+        }
+
+        private static string PathKey(PATH_INFO path)
+        {
+            return path.targetInfo.adapterId.HighPart + ":" + path.targetInfo.adapterId.LowPart + ":" +
+                path.targetInfo.id;
+        }
+
+        private static string GetSourceName(PATH_INFO path)
+        {
+            SOURCE_DEVICE_NAME packet = new SOURCE_DEVICE_NAME();
+            packet.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+            packet.header.size = (uint)Marshal.SizeOf(typeof(SOURCE_DEVICE_NAME));
+            packet.header.adapterId = path.sourceInfo.adapterId;
+            packet.header.id = path.sourceInfo.id;
+            packet.viewGdiDeviceName = String.Empty;
+            return DisplayConfigGetDeviceInfo(ref packet) == ERROR_SUCCESS
+                ? packet.viewGdiDeviceName ?? String.Empty
+                : String.Empty;
         }
 
         private static string[] GetDisplayDeviceNames(bool internalDisplay)
@@ -1974,14 +2122,9 @@ namespace OpenSynapseNative
             {
                 if (IsInternal(path) != internalDisplay)
                     continue;
-                SOURCE_DEVICE_NAME packet = new SOURCE_DEVICE_NAME();
-                packet.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
-                packet.header.size = (uint)Marshal.SizeOf(typeof(SOURCE_DEVICE_NAME));
-                packet.header.adapterId = path.sourceInfo.adapterId;
-                packet.header.id = path.sourceInfo.id;
-                packet.viewGdiDeviceName = String.Empty;
-                if (DisplayConfigGetDeviceInfo(ref packet) == ERROR_SUCCESS && !String.IsNullOrWhiteSpace(packet.viewGdiDeviceName))
-                    names.Add(packet.viewGdiDeviceName);
+                string name = GetSourceName(path);
+                if (!String.IsNullOrWhiteSpace(name))
+                    names.Add(name);
             }
             string[] result = new string[names.Count];
             names.CopyTo(result);
@@ -2022,26 +2165,96 @@ namespace OpenSynapseNative
             return RationalHz(modes[index].data.target.signal.vSyncFreq);
         }
 
-        public static DynamicRefreshInfo GetStatus()
+        public static DynamicRefreshInfo[] GetStatuses()
         {
             PATH_INFO[] paths;
             MODE_INFO[] modes;
             Query(out paths, out modes);
-            DynamicRefreshInfo info = new DynamicRefreshInfo();
-            info.Message = "No active internal display path.";
+            List<DynamicRefreshInfo> result = new List<DynamicRefreshInfo>();
             foreach (PATH_INFO path in paths)
             {
-                if (!IsInternal(path))
-                    continue;
-                info.InternalDisplayActive = true;
+                DynamicRefreshInfo info = new DynamicRefreshInfo();
+                info.Key = PathKey(path);
+                info.GdiDeviceName = GetSourceName(path);
+                info.IsInternal = IsInternal(path);
+                info.InternalDisplayActive = info.IsInternal;
                 info.Supported = (path.flags & DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE) != 0;
                 info.Enabled = (path.flags & DISPLAYCONFIG_PATH_BOOST_REFRESH_RATE) != 0;
                 info.BaseFrequency = RationalHz(path.targetInfo.refreshRate);
                 info.BoostFrequency = TargetModeHz(path, modes);
-                info.Message = info.Supported ? "Windows dynamic refresh is available." : "The active internal path does not advertise virtual refresh support.";
-                return info;
+                info.Message = info.Supported ? "Windows dynamic refresh is available." :
+                    "The active path does not advertise virtual refresh support.";
+                result.Add(info);
             }
-            return info;
+            return result.ToArray();
+        }
+
+        public static DynamicRefreshInfo GetStatus()
+        {
+            foreach (DynamicRefreshInfo item in GetStatuses())
+                if (item.IsInternal) return item;
+            return new DynamicRefreshInfo
+            {
+                Key = String.Empty,
+                GdiDeviceName = String.Empty,
+                Message = "No active internal display path."
+            };
+        }
+
+        public static bool RestoreStatus(string gdiDeviceName, bool enabled, int baseFrequency, int boostFrequency)
+        {
+            if (String.IsNullOrWhiteSpace(gdiDeviceName))
+                throw new ArgumentException("A display device name is required.", "gdiDeviceName");
+            DynamicRefreshInfo previous = null;
+            foreach (DynamicRefreshInfo item in GetStatuses())
+                if (String.Equals(item.GdiDeviceName, gdiDeviceName, StringComparison.OrdinalIgnoreCase)) { previous = item; break; }
+            bool changed = previous == null || previous.Enabled != enabled ||
+                (baseFrequency > 1 && Math.Abs(previous.BaseFrequency - baseFrequency) > 1) ||
+                (enabled && boostFrequency > 1 && Math.Abs(previous.BoostFrequency - boostFrequency) > 1);
+            if (enabled && boostFrequency > 1)
+                DisplayModeManager.ApplyFixedRefresh(boostFrequency, new[] { gdiDeviceName });
+
+            PATH_INFO[] paths;
+            MODE_INFO[] modes;
+            Query(out paths, out modes);
+            bool found = false;
+            for (int index = 0; index < paths.Length; index++)
+            {
+                PATH_INFO path = paths[index];
+                if (!String.Equals(GetSourceName(path), gdiDeviceName, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                found = true;
+                bool currentEnabled = (path.flags & DISPLAYCONFIG_PATH_BOOST_REFRESH_RATE) != 0;
+                if (enabled && (path.flags & DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE) == 0)
+                    throw new InvalidOperationException(gdiDeviceName + " no longer supports Windows dynamic refresh.");
+                if (enabled) path.flags |= DISPLAYCONFIG_PATH_BOOST_REFRESH_RATE;
+                else path.flags &= ~DISPLAYCONFIG_PATH_BOOST_REFRESH_RATE;
+                int requestedFrequency = enabled ? baseFrequency : (boostFrequency > 1 ? boostFrequency : baseFrequency);
+                if (requestedFrequency > 1)
+                {
+                    path.targetInfo.refreshRate.Numerator = (uint)requestedFrequency;
+                    path.targetInfo.refreshRate.Denominator = 1;
+                }
+                paths[index] = path;
+                break;
+            }
+            if (!found)
+                throw new InvalidOperationException(gdiDeviceName + " is not an active display path.");
+
+            uint flags = SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES | SDC_SAVE_TO_DATABASE |
+                SDC_VIRTUAL_MODE_AWARE | SDC_VIRTUAL_REFRESH_RATE_AWARE;
+            int result = SetDisplayConfig((uint)paths.Length, paths, (uint)modes.Length, modes, flags);
+            if (result != ERROR_SUCCESS)
+                throw new Win32Exception(result, "Cannot restore dynamic refresh for " + gdiDeviceName + ".");
+
+            DynamicRefreshInfo verified = null;
+            foreach (DynamicRefreshInfo item in GetStatuses())
+                if (String.Equals(item.GdiDeviceName, gdiDeviceName, StringComparison.OrdinalIgnoreCase)) { verified = item; break; }
+            if (verified == null || verified.Enabled != enabled ||
+                (baseFrequency > 1 && Math.Abs(verified.BaseFrequency - baseFrequency) > 1) ||
+                (enabled && boostFrequency > 1 && Math.Abs(verified.BoostFrequency - boostFrequency) > 1))
+                throw new InvalidOperationException("Windows accepted but did not retain the captured dynamic refresh state for " + gdiDeviceName + ".");
+            return changed;
         }
 
         public static bool ValidateNativeDynamic()
@@ -2155,6 +2368,7 @@ namespace OpenSynapseNative
     public sealed class AdvancedColorInfo
     {
         public string Key { get; internal set; }
+        public string GdiDeviceName { get; internal set; }
         public bool Supported { get; internal set; }
         public bool Enabled { get; internal set; }
         public uint BitsPerColorChannel { get; internal set; }
@@ -2168,6 +2382,7 @@ namespace OpenSynapseNative
         private const int ERROR_INSUFFICIENT_BUFFER = 122;
         private const int GET_ADVANCED_COLOR_INFO = 9;
         private const int SET_ADVANCED_COLOR_STATE = 10;
+        private const int GET_SOURCE_NAME = 1;
         private static readonly Dictionary<string, bool> OriginalStates =
             new Dictionary<string, bool>(StringComparer.Ordinal);
 
@@ -2230,6 +2445,12 @@ namespace OpenSynapseNative
         }
         [StructLayout(LayoutKind.Sequential)]
         private struct COLOR_SET { public HEADER header; public uint value; }
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct SOURCE_NAME
+        {
+            public HEADER header;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string viewGdiDeviceName;
+        }
 
         [DllImport("user32.dll")]
         private static extern int GetDisplayConfigBufferSizes(uint flags, out uint paths, out uint modes);
@@ -2238,6 +2459,8 @@ namespace OpenSynapseNative
             ref uint modes, [Out] MODE_INFO[] modeArray, IntPtr topology);
         [DllImport("user32.dll", EntryPoint = "DisplayConfigGetDeviceInfo")]
         private static extern int GetColorInfo(ref COLOR_GET packet);
+        [DllImport("user32.dll", EntryPoint = "DisplayConfigGetDeviceInfo")]
+        private static extern int GetSourceInfo(ref SOURCE_NAME packet);
         [DllImport("user32.dll", EntryPoint = "DisplayConfigSetDeviceInfo")]
         private static extern int SetColorInfo(ref COLOR_SET packet);
 
@@ -2270,6 +2493,19 @@ namespace OpenSynapseNative
         private static string Key(PATH_TARGET target)
         {
             return target.adapterId.HighPart + ":" + target.adapterId.LowPart + ":" + target.id;
+        }
+
+        private static string SourceName(PATH_SOURCE source)
+        {
+            SOURCE_NAME packet = new SOURCE_NAME();
+            packet.header.type = GET_SOURCE_NAME;
+            packet.header.size = (uint)Marshal.SizeOf(typeof(SOURCE_NAME));
+            packet.header.adapterId = source.adapterId;
+            packet.header.id = source.id;
+            packet.viewGdiDeviceName = String.Empty;
+            return GetSourceInfo(ref packet) == ERROR_SUCCESS
+                ? packet.viewGdiDeviceName ?? String.Empty
+                : String.Empty;
         }
 
         private static bool TryGet(PATH_TARGET target, out COLOR_GET packet)
@@ -2316,6 +2552,7 @@ namespace OpenSynapseNative
                     continue;
                 AdvancedColorInfo info = new AdvancedColorInfo();
                 info.Key = key;
+                info.GdiDeviceName = SourceName(path.sourceInfo);
                 info.Supported = (packet.value & 1u) != 0;
                 info.Enabled = (packet.value & 2u) != 0;
                 info.BitsPerColorChannel = packet.bitsPerColorChannel;
@@ -2349,8 +2586,13 @@ namespace OpenSynapseNative
         {
             foreach (PATH_INFO path in GetPaths())
             {
-                if (String.Equals(Key(path.targetInfo), key, StringComparison.Ordinal))
-                    return Set(path.targetInfo, enabled);
+                if (!String.Equals(Key(path.targetInfo), key, StringComparison.Ordinal))
+                    continue;
+                bool changed = Set(path.targetInfo, enabled);
+                COLOR_GET verified;
+                if (!TryGet(path.targetInfo, out verified) || ((verified.value & 2u) != 0) != enabled)
+                    throw new InvalidOperationException("Windows accepted but did not retain the requested advanced color state for " + key + ".");
+                return changed;
             }
             return false;
         }
@@ -2367,6 +2609,441 @@ namespace OpenSynapseNative
             }
             OriginalStates.Clear();
             return changed;
+        }
+    }
+
+    public sealed class ColorProfileInfo
+    {
+        public string GdiDeviceName { get; internal set; }
+        public string ProfilePath { get; internal set; }
+        public bool Available { get; internal set; }
+        public string Error { get; internal set; }
+    }
+
+    public static class ColorProfileManager
+    {
+        private const int ICM_ON = 2;
+
+        [DllImport("gdi32.dll", CharSet = CharSet.Unicode)]
+        private static extern IntPtr CreateDC(string driver, string device, string output, IntPtr initData);
+        [DllImport("gdi32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool DeleteDC(IntPtr deviceContext);
+        [DllImport("gdi32.dll")]
+        private static extern int SetICMMode(IntPtr deviceContext, int mode);
+        [DllImport("gdi32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetICMProfileW")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetICMProfile(IntPtr deviceContext, ref uint length, StringBuilder fileName);
+        [DllImport("gdi32.dll", CharSet = CharSet.Unicode, EntryPoint = "SetICMProfileW")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetICMProfile(IntPtr deviceContext, string fileName);
+
+        private static ColorProfileInfo ReadOne(string deviceName)
+        {
+            ColorProfileInfo result = new ColorProfileInfo
+            {
+                GdiDeviceName = deviceName,
+                ProfilePath = String.Empty,
+                Error = String.Empty
+            };
+            IntPtr context = CreateDC("DISPLAY", deviceName, null, IntPtr.Zero);
+            if (context == IntPtr.Zero)
+            {
+                result.Error = "CreateDC failed: " + Marshal.GetLastWin32Error();
+                return result;
+            }
+            try
+            {
+                SetICMMode(context, ICM_ON);
+                uint length = 0;
+                GetICMProfile(context, ref length, null);
+                if (length == 0) length = 1024;
+                StringBuilder profile = new StringBuilder((int)length + 1);
+                if (!GetICMProfile(context, ref length, profile))
+                {
+                    result.Error = "GetICMProfile failed: " + Marshal.GetLastWin32Error();
+                    return result;
+                }
+                result.ProfilePath = profile.ToString();
+                result.Available = !String.IsNullOrWhiteSpace(result.ProfilePath);
+                return result;
+            }
+            finally { DeleteDC(context); }
+        }
+
+        public static ColorProfileInfo[] GetStatus()
+        {
+            List<ColorProfileInfo> result = new List<ColorProfileInfo>();
+            foreach (DisplayModeInfo display in DisplayModeManager.GetActiveDisplays())
+                result.Add(ReadOne(display.DeviceName));
+            return result.ToArray();
+        }
+
+        public static bool SetProfile(string deviceName, string profilePath)
+        {
+            if (String.IsNullOrWhiteSpace(deviceName))
+                throw new ArgumentException("A display device name is required.", "deviceName");
+            if (String.IsNullOrWhiteSpace(profilePath) || !File.Exists(profilePath))
+                throw new FileNotFoundException("The captured ICC profile is unavailable.", profilePath);
+            ColorProfileInfo before = ReadOne(deviceName);
+            if (before.Available && String.Equals(before.ProfilePath, profilePath, StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            IntPtr context = CreateDC("DISPLAY", deviceName, null, IntPtr.Zero);
+            if (context == IntPtr.Zero)
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot open the display color context for " + deviceName + ".");
+            try
+            {
+                SetICMMode(context, ICM_ON);
+                if (!SetICMProfile(context, profilePath))
+                    throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot restore the ICC profile for " + deviceName + ".");
+            }
+            finally { DeleteDC(context); }
+
+            ColorProfileInfo verified = ReadOne(deviceName);
+            if (!verified.Available || !String.Equals(verified.ProfilePath, profilePath, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Windows accepted but did not retain the ICC profile for " + deviceName + ".");
+            return true;
+        }
+    }
+
+    public sealed class PhysicalMonitorBrightnessInfo
+    {
+        public string GdiDeviceName { get; internal set; }
+        public int PhysicalIndex { get; internal set; }
+        public string Description { get; internal set; }
+        public bool Supported { get; internal set; }
+        public uint Minimum { get; internal set; }
+        public uint Current { get; internal set; }
+        public uint Maximum { get; internal set; }
+        public int CurrentPercent { get; internal set; }
+        public string Error { get; internal set; }
+    }
+
+    public static class PhysicalMonitorBrightnessManager
+    {
+        [StructLayout(LayoutKind.Sequential)]
+        private struct RECT
+        {
+            public int left;
+            public int top;
+            public int right;
+            public int bottom;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct MONITORINFOEX
+        {
+            public uint cbSize;
+            public RECT rcMonitor;
+            public RECT rcWork;
+            public uint dwFlags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+            public string szDevice;
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct PHYSICAL_MONITOR
+        {
+            public IntPtr hPhysicalMonitor;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+            public string szPhysicalMonitorDescription;
+        }
+
+        private delegate bool MonitorEnumProc(IntPtr monitor, IntPtr hdc, IntPtr monitorRect, IntPtr data);
+
+        [DllImport("user32.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr clipRect, MonitorEnumProc callback, IntPtr data);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFOEX info);
+        [DllImport("dxva2.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetNumberOfPhysicalMonitorsFromHMONITOR(IntPtr monitor, out uint count);
+        [DllImport("dxva2.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetPhysicalMonitorsFromHMONITOR(IntPtr monitor, uint count, [Out] PHYSICAL_MONITOR[] physicalMonitors);
+        [DllImport("dxva2.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool DestroyPhysicalMonitors(uint count, PHYSICAL_MONITOR[] physicalMonitors);
+        [DllImport("dxva2.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool GetMonitorBrightness(IntPtr physicalMonitor, out uint minimum, out uint current, out uint maximum);
+        [DllImport("dxva2.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool SetMonitorBrightness(IntPtr physicalMonitor, uint value);
+
+        private static int ToPercent(uint minimum, uint current, uint maximum)
+        {
+            if (maximum <= minimum) return 0;
+            double percent = (current - minimum) * 100.0 / (maximum - minimum);
+            return (int)Math.Round(Math.Max(0.0, Math.Min(100.0, percent)));
+        }
+
+        private static PhysicalMonitorBrightnessInfo ReadOne(string deviceName, int index, PHYSICAL_MONITOR monitor)
+        {
+            PhysicalMonitorBrightnessInfo result = new PhysicalMonitorBrightnessInfo
+            {
+                GdiDeviceName = deviceName ?? String.Empty,
+                PhysicalIndex = index,
+                Description = monitor.szPhysicalMonitorDescription ?? String.Empty,
+                Error = String.Empty
+            };
+            uint minimum;
+            uint current;
+            uint maximum;
+            if (!GetMonitorBrightness(monitor.hPhysicalMonitor, out minimum, out current, out maximum))
+            {
+                result.Error = "DDC/CI brightness is unavailable: " + Marshal.GetLastWin32Error();
+                return result;
+            }
+            result.Supported = true;
+            result.Minimum = minimum;
+            result.Current = current;
+            result.Maximum = maximum;
+            result.CurrentPercent = ToPercent(minimum, current, maximum);
+            return result;
+        }
+
+        public static PhysicalMonitorBrightnessInfo[] GetStatus()
+        {
+            List<PhysicalMonitorBrightnessInfo> result = new List<PhysicalMonitorBrightnessInfo>();
+            MonitorEnumProc callback = delegate(IntPtr monitor, IntPtr hdc, IntPtr rect, IntPtr data)
+            {
+                MONITORINFOEX info = new MONITORINFOEX();
+                info.cbSize = (uint)Marshal.SizeOf(typeof(MONITORINFOEX));
+                string deviceName = GetMonitorInfo(monitor, ref info) ? info.szDevice ?? String.Empty : String.Empty;
+                uint count;
+                if (!GetNumberOfPhysicalMonitorsFromHMONITOR(monitor, out count) || count == 0)
+                {
+                    result.Add(new PhysicalMonitorBrightnessInfo
+                    {
+                        GdiDeviceName = deviceName,
+                        PhysicalIndex = -1,
+                        Description = String.Empty,
+                        Error = "No DDC/CI physical monitor endpoint: " + Marshal.GetLastWin32Error()
+                    });
+                    return true;
+                }
+                PHYSICAL_MONITOR[] physical = new PHYSICAL_MONITOR[count];
+                if (!GetPhysicalMonitorsFromHMONITOR(monitor, count, physical))
+                {
+                    result.Add(new PhysicalMonitorBrightnessInfo
+                    {
+                        GdiDeviceName = deviceName,
+                        PhysicalIndex = -1,
+                        Description = String.Empty,
+                        Error = "Cannot enumerate DDC/CI monitor endpoints: " + Marshal.GetLastWin32Error()
+                    });
+                    return true;
+                }
+                try
+                {
+                    for (int index = 0; index < physical.Length; index++)
+                        result.Add(ReadOne(deviceName, index, physical[index]));
+                }
+                finally { DestroyPhysicalMonitors(count, physical); }
+                return true;
+            };
+            if (!EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, callback, IntPtr.Zero))
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot enumerate physical monitors.");
+            GC.KeepAlive(callback);
+            return result.ToArray();
+        }
+
+        public static bool SetBrightness(string gdiDeviceName, int physicalIndex, uint value)
+        {
+            if (String.IsNullOrWhiteSpace(gdiDeviceName))
+                throw new ArgumentException("A display device name is required.", "gdiDeviceName");
+            bool found = false;
+            bool changed = false;
+            Exception failure = null;
+            MonitorEnumProc callback = delegate(IntPtr monitor, IntPtr hdc, IntPtr rect, IntPtr data)
+            {
+                MONITORINFOEX info = new MONITORINFOEX();
+                info.cbSize = (uint)Marshal.SizeOf(typeof(MONITORINFOEX));
+                if (!GetMonitorInfo(monitor, ref info) ||
+                    !String.Equals(info.szDevice, gdiDeviceName, StringComparison.OrdinalIgnoreCase)) return true;
+                uint count;
+                if (!GetNumberOfPhysicalMonitorsFromHMONITOR(monitor, out count) || physicalIndex < 0 || physicalIndex >= count)
+                {
+                    failure = new InvalidOperationException("The captured DDC/CI brightness endpoint is no longer available for " + gdiDeviceName + ".");
+                    return false;
+                }
+                PHYSICAL_MONITOR[] physical = new PHYSICAL_MONITOR[count];
+                if (!GetPhysicalMonitorsFromHMONITOR(monitor, count, physical))
+                {
+                    failure = new Win32Exception(Marshal.GetLastWin32Error(), "Cannot open the DDC/CI brightness endpoint for " + gdiDeviceName + ".");
+                    return false;
+                }
+                try
+                {
+                    found = true;
+                    uint minimum;
+                    uint current;
+                    uint maximum;
+                    if (!GetMonitorBrightness(physical[physicalIndex].hPhysicalMonitor, out minimum, out current, out maximum))
+                        throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot read the DDC/CI brightness endpoint for " + gdiDeviceName + ".");
+                    uint target = Math.Max(minimum, Math.Min(maximum, value));
+                    if (current == target) return false;
+                    if (!SetMonitorBrightness(physical[physicalIndex].hPhysicalMonitor, target))
+                        throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot restore DDC/CI brightness for " + gdiDeviceName + ".");
+                    uint verified;
+                    if (!GetMonitorBrightness(physical[physicalIndex].hPhysicalMonitor, out minimum, out verified, out maximum) || verified != target)
+                        throw new InvalidOperationException("The monitor accepted but did not retain DDC/CI brightness for " + gdiDeviceName + ".");
+                    changed = true;
+                }
+                catch (Exception exception) { failure = exception; }
+                finally { DestroyPhysicalMonitors(count, physical); }
+                return false;
+            };
+            bool enumerationCompleted = EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, callback, IntPtr.Zero);
+            if (!enumerationCompleted && !found && failure == null)
+                throw new Win32Exception(Marshal.GetLastWin32Error(), "Cannot enumerate physical monitors.");
+            GC.KeepAlive(callback);
+            if (failure != null) throw failure;
+            if (!found) throw new InvalidOperationException("The captured display is no longer active: " + gdiDeviceName + ".");
+            return changed;
+        }
+    }
+
+    public sealed class ThermalZoneSample
+    {
+        public string Name { get; internal set; }
+        public double TemperatureC { get; internal set; }
+        public long ThrottleReasons { get; internal set; }
+        public bool Throttled { get { return ThrottleReasons != 0; } }
+    }
+
+    public sealed class HardwareTelemetrySample
+    {
+        public bool Available { get; internal set; }
+        public long SampledAtUtcTicks { get; internal set; }
+        public ThermalZoneSample[] ThermalZones { get; internal set; }
+        public double MaximumTemperatureC { get; internal set; }
+        public bool ThermalThrottlingDetected { get; internal set; }
+        public double CpuActualFrequencyMhz { get; internal set; }
+        public double CpuPercentMaximumFrequency { get; internal set; }
+        public bool NpuAvailable { get; internal set; }
+        public double NpuUtilizationPercent { get; internal set; }
+        public string NpuCounterSet { get; internal set; }
+        public string Error { get; internal set; }
+    }
+
+    public static class HardwareTelemetry
+    {
+        private static readonly object SyncRoot = new object();
+        private static bool npuDiscoveryComplete;
+        private static string npuCategoryName = String.Empty;
+        private static string npuCounterName = String.Empty;
+
+        private static double ReadCounter(string category, string counter, string instance)
+        {
+            using (PerformanceCounter value = new PerformanceCounter(category, counter, instance, true))
+                return value.NextValue();
+        }
+
+        private static void DiscoverNpuCounter()
+        {
+            if (npuDiscoveryComplete) return;
+            npuDiscoveryComplete = true;
+            try
+            {
+                foreach (PerformanceCounterCategory category in PerformanceCounterCategory.GetCategories())
+                {
+                    if (!Regex.IsMatch(category.CategoryName, @"(^|\b)(NPU|Neural|AI Engine)(\b|$)", RegexOptions.IgnoreCase))
+                        continue;
+                    string[] instances = category.GetInstanceNames();
+                    PerformanceCounter[] counters = instances.Length > 0
+                        ? category.GetCounters(instances[0])
+                        : category.GetCounters();
+                    try
+                    {
+                        foreach (PerformanceCounter counter in counters)
+                        {
+                            if (Regex.IsMatch(counter.CounterName, @"utili[sz]ation|%.*(usage|time)", RegexOptions.IgnoreCase))
+                            {
+                                npuCategoryName = category.CategoryName;
+                                npuCounterName = counter.CounterName;
+                                return;
+                            }
+                        }
+                    }
+                    finally { foreach (PerformanceCounter counter in counters) counter.Dispose(); }
+                }
+            }
+            catch { }
+        }
+
+        public static HardwareTelemetrySample Read()
+        {
+            lock (SyncRoot)
+            {
+                HardwareTelemetrySample result = new HardwareTelemetrySample
+                {
+                    SampledAtUtcTicks = DateTime.UtcNow.Ticks,
+                    ThermalZones = new ThermalZoneSample[0],
+                    NpuCounterSet = String.Empty,
+                    Error = String.Empty
+                };
+                List<string> errors = new List<string>();
+                try
+                {
+                    PerformanceCounterCategory category = new PerformanceCounterCategory("Thermal Zone Information");
+                    List<ThermalZoneSample> zones = new List<ThermalZoneSample>();
+                    foreach (string instance in category.GetInstanceNames())
+                    {
+                        try
+                        {
+                            double rawTemperature = ReadCounter("Thermal Zone Information", "High Precision Temperature", instance);
+                            long reasons = (long)Math.Round(ReadCounter("Thermal Zone Information", "Throttle Reasons", instance));
+                            double celsius = Math.Round(rawTemperature / 10.0 - 273.15, 1);
+                            if (celsius < -100 || celsius > 200) continue;
+                            ThermalZoneSample zone = new ThermalZoneSample
+                            {
+                                Name = instance,
+                                TemperatureC = celsius,
+                                ThrottleReasons = reasons
+                            };
+                            zones.Add(zone);
+                            result.MaximumTemperatureC = Math.Max(result.MaximumTemperatureC, celsius);
+                            result.ThermalThrottlingDetected |= zone.Throttled;
+                        }
+                        catch (Exception exception) { errors.Add(instance + ": " + exception.Message); }
+                    }
+                    result.ThermalZones = zones.ToArray();
+                }
+                catch (Exception exception) { errors.Add("thermal: " + exception.Message); }
+
+                try { result.CpuActualFrequencyMhz = Math.Round(ReadCounter("Processor Information", "Actual Frequency", "_Total"), 1); }
+                catch (Exception exception) { errors.Add("cpu frequency: " + exception.Message); }
+                try { result.CpuPercentMaximumFrequency = Math.Round(ReadCounter("Processor Information", "% of Maximum Frequency", "_Total"), 1); }
+                catch (Exception exception) { errors.Add("cpu maximum frequency: " + exception.Message); }
+
+                DiscoverNpuCounter();
+                if (!String.IsNullOrWhiteSpace(npuCategoryName))
+                {
+                    result.NpuCounterSet = npuCategoryName + "\\" + npuCounterName;
+                    try
+                    {
+                        PerformanceCounterCategory category = new PerformanceCounterCategory(npuCategoryName);
+                        double maximum = 0;
+                        string[] instances = category.GetInstanceNames();
+                        if (instances.Length == 0)
+                            maximum = ReadCounter(npuCategoryName, npuCounterName, String.Empty);
+                        else
+                            foreach (string instance in instances)
+                                maximum = Math.Max(maximum, ReadCounter(npuCategoryName, npuCounterName, instance));
+                        result.NpuAvailable = true;
+                        result.NpuUtilizationPercent = Math.Round(Math.Min(100.0, Math.Max(0.0, maximum)), 1);
+                    }
+                    catch (Exception exception) { errors.Add("npu: " + exception.Message); }
+                }
+                result.Available = result.ThermalZones.Length > 0 || result.CpuActualFrequencyMhz > 0 || result.NpuAvailable;
+                result.Error = String.Join("; ", errors.ToArray());
+                return result;
+            }
         }
     }
 

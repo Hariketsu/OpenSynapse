@@ -15,7 +15,7 @@ $mainScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'OpenSynapse.ps1'
 . $mainScript -Mode SelfTest
 $source = Get-Content -Raw -LiteralPath $mainScript
 $config = Get-DefaultConfig
-if ($config.Version -ne 13 -or -not [bool]$config.BatteryHighDrainAlertsEnabled -or
+if ($config.Version -ne 14 -or -not [bool]$config.BatteryHighDrainAlertsEnabled -or
     $config.BatteryHighDrainSampleSeconds -ne 30 -or $config.BatteryHighDrainCpuPercent -ne 15 -or
     $config.BatteryHighDrainMinimumSamples -ne 2 -or $config.BatteryHighDrainMinimumDischargeW -ne 14 -or
     $config.BatteryHighDrainCooldownMinutes -ne 30) {

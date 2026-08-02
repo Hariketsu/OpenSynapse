@@ -14,7 +14,7 @@ trap {
 $mainScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'OpenSynapse.ps1'
 . $mainScript -Mode SelfTest
 $config = Get-DefaultConfig
-if ($config.Version -ne 13 -or $config.SmartGpuEnter -ne 20 -or -not $config.SmartFullscreenEnabled -or
+if ($config.Version -ne 14 -or $config.SmartGpuEnter -ne 20 -or -not $config.SmartFullscreenEnabled -or
     @($config.ApplicationRules).Count -lt 15 -or $config.DgpuLeakMinimumSamples -ne 6) {
     throw 'Safe telemetry defaults are incomplete.'
 }
@@ -227,7 +227,7 @@ finally { Remove-Item -LiteralPath $exportRoot -Recurse -Force -ErrorAction Sile
 
 $result = [pscustomobject]@{
     Result = 'PASS'
-    ConfigVersion = 13
+    ConfigVersion = 14
     BatteryClassApi = [bool]$battery.Available
     BatteryCount = $battery.BatteryCount
     GpuTelemetryStartupSeconds = $gpuStartupAttempts

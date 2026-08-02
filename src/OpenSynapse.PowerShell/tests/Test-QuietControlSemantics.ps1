@@ -150,12 +150,14 @@ try {
     }
     Write-TelemetryRecord $telemetrySnapshot $manualState Quiet Quiet '' Quiet
     $record = Get-Content -LiteralPath $script:TelemetryPath -Raw | ConvertFrom-Json
-    if ($record.SchemaVersion -ne 5 -or $record.OpenSynapseVersion -ne '2.4.6' -or
+    if ($record.SchemaVersion -ne 6 -or $record.OpenSynapseVersion -ne '2.5.0' -or
         $record.SupplyClassifierVersion -ne 2 -or $record.RawSupplyType -ne 'Battery' -or
         $record.SupplyConfirmationPending -or $record.ActiveProfile -ne 'Quiet' -or
         $record.BatteryRemainingMwh -ne 64000 -or $record.BatteryVoltageMv -ne 16335 -or
-        $record.EstimatedHours -ne 4.0) {
-        throw 'Telemetry schema v3 is missing classification evidence, active-profile or battery endurance fields.'
+        $record.EstimatedHours -ne 4.0 -or $null -eq $record.PSObject.Properties['PolicyPlanVerified'] -or
+        $null -eq $record.PSObject.Properties['PolicyRefreshVerified'] -or
+        $null -eq $record.PSObject.Properties['DisplayPhysicalBrightness']) {
+        throw 'Telemetry schema v6 is missing classification, policy-verification, display or battery-endurance evidence.'
     }
 }
 finally {

@@ -1,8 +1,21 @@
-# OpenSynapse 2.4.6 Eco 模式与显示策略验证报告
+# OpenSynapse 2.5.0 Experiment、逐屏恢复与硬件遥测验证报告
 
-验证日期：2026-08-02
+验证日期：2026-08-03
 分支：`dev-echo`
 参考：`ref/PowerPilot2.4.1`
+
+## 2026-08-03 Experiment 与逐屏状态验证
+
+- 新增独立且锁定的 Experiment 档位；Auto、临时档和供电切换不能覆盖，退出时恢复实验前状态。报告失败不会阻断恢复，退出目标应用失败会回落 Auto，不留下无会话的幽灵 Experiment 状态。
+- 完整快照覆盖活动显示器模式/色深/位置/方向、ICC 关联与 SHA-256、HDR/Advanced Color、DRR、缩放、WMI 亮度和 DDC/CI 物理显示器亮度；所有写入路径带回读验证。
+- 本机非破坏性“当前状态→同值恢复→逐项比较”通过：`Verified=True`、`Changes=0`、`Differences=0`。当前活动外屏 `DISPLAY1` 的 DDC/CI 亮度端点可读，测试时为 70/100。
+- 实验报告同时生成 JSON、HTML 与 SHA-256；记录 OpenSynapse/遥测 schema、Windows/BIOS/EC、显示/ICC、GPU、温区、节流与 NPU 计数器可用性。
+- 本机读取到 2 个 ACPI 温区；Windows 当前未暴露 NPU 性能计数器，界面和报告明确显示 `Not exposed`，没有伪造 0% 利用率。外屏活动时内屏 DRR 不可实机切换，因此未声称完成内屏动态刷新写入验证。
+- PowerShell 23/23 项定义/运行时测试通过（Snipaste 项在专用 HKCU 临时键中单独通过）；Experiment 专项包含逐屏采集、漂移检测、报告及原生接口检查。
+- .NET Core 39/39、Agent 53/53、安装器定义、PowerShell 解析/原生 C# 编译、`git diff --check` 均通过。
+- Dashboard、Diagnostics、Settings 在 1440×900、96 DPI 下完成实际捕获，所有可见控件均位于父容器范围内。
+- 2.5.0 已在目标机完成管理员安装与现场回读：计划任务为 `Running/Highest`，运行时 `Healthy/PerMonitorV2`，配置 v14、状态 v11，78 项电源参数、快捷方式、图标和安装文件哈希全部通过，启动后的策略应用失败为 0。当前活动档位为 Hyper，供电分类为 `HighPowerAC`。
+- 本轮未连接白名单 DeathAdder V3 Pro，且外屏活动时内屏未激活，因此不宣称鼠标 HID 写入或内屏 DRR 60–240 Hz 切换已在 2.5.0 完成硬件闭环。
 
 ## 2026-08-02 Eco 模式、280W 恢复与界面命名验证
 

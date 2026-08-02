@@ -17,7 +17,7 @@ $source = Get-Content -Raw -LiteralPath $mainScript
 $installStart = $source.IndexOf('function Install-OpenSynapse', [StringComparison]::Ordinal)
 $installEnd = $source.IndexOf('function Uninstall-OpenSynapse', $installStart, [StringComparison]::Ordinal)
 if ($installStart -lt 0 -or $installEnd -le $installStart -or
-    $source.Substring($installStart, $installEnd - $installStart) -notmatch 'Version\s*=\s*10') {
+    $source.Substring($installStart, $installEnd - $installStart) -notmatch 'Version\s*=\s*11') {
     throw 'Installer state schema version is stale.'
 }
 
@@ -39,7 +39,7 @@ try {
     $v1Config = [pscustomobject]@{ Selection = 'Auto'; CloseHighDrainAppsInQuiet = $true; QuietProcessNames = @('HWiNFO64') }
     Write-JsonFile $script:ConfigPath $v1Config
     $migratedConfig = Get-AppConfig
-    if ($migratedConfig.Version -ne 13 -or $migratedConfig.InternalScale -ne 150 -or $migratedConfig.ExternalScale -ne 125) { throw 'v1 config migration failed.' }
+    if ($migratedConfig.Version -ne 14 -or $migratedConfig.InternalScale -ne 150 -or $migratedConfig.ExternalScale -ne 125) { throw 'v1 config migration failed.' }
     if (-not $migratedConfig.ManageWakeDevices -or -not $migratedConfig.ManageRefreshRate) { throw 'v2 config defaults were not added.' }
     if ('ArmourySocketServer' -notin @($migratedConfig.QuietProcessNames)) { throw 'The v2 process list was not merged into the legacy config.' }
     if ($migratedConfig.RefreshPolicy -ne 'Auto' -or $migratedConfig.BalanceBrightness -ne 60 -or $migratedConfig.BalanceBatteryThreshold -ne 50) {
@@ -78,6 +78,10 @@ try {
         'System' -notin @($migratedConfig.BatteryHighDrainIgnoredProcesses)) {
         throw 'v13 battery high-drain alert defaults were not added.'
     }
+    if ($migratedConfig.ExperimentRefreshRate -ne 240 -or $migratedConfig.ExperimentVerificationSeconds -ne 15 -or
+        -not [bool]$migratedConfig.ExperimentAutoReport) {
+        throw 'v14 Experiment defaults were not added.'
+    }
 
     $legacyDotNetConfig = [pscustomobject][ordered]@{
         schemaVersion = 10
@@ -109,7 +113,7 @@ try {
     }
     Write-JsonFile $script:ConfigPath $legacyDotNetConfig
     $dotNetMigratedConfig = Get-AppConfig
-    if (-not $script:LegacyDotNetConfigDetected -or $dotNetMigratedConfig.Version -ne 13 -or
+    if (-not $script:LegacyDotNetConfigDetected -or $dotNetMigratedConfig.Version -ne 14 -or
         $dotNetMigratedConfig.Selection -ne 'Hyper' -or $dotNetMigratedConfig.BalanceBatteryThreshold -ne 57 -or
         $dotNetMigratedConfig.ManageAdvancedColor -or $dotNetMigratedConfig.ManageBrightness -or
         $dotNetMigratedConfig.DisplayScalingEnabled -or $dotNetMigratedConfig.RefreshPolicy -ne 'Auto' -or
@@ -129,7 +133,7 @@ try {
 
     Write-JsonFile $script:ConfigPath @('PowerPilot uninstaller output', $migratedConfig)
     $interruptedTakeoverConfig = Get-AppConfig
-    if ($interruptedTakeoverConfig.Version -ne 13 -or $interruptedTakeoverConfig.Selection -ne 'Auto' -or
+    if ($interruptedTakeoverConfig.Version -ne 14 -or $interruptedTakeoverConfig.Selection -ne 'Auto' -or
         @($interruptedTakeoverConfig.ApplicationRules).Count -lt 15) {
         throw 'Interrupted PowerPilot takeover configuration recovery failed.'
     }
@@ -143,7 +147,7 @@ try {
     $v10QuietConfig.QuietCpuLowThreshold = 20
     Write-JsonFile $script:ConfigPath $v10QuietConfig
     $v11QuietConfig = Get-AppConfig
-    if ($v11QuietConfig.Version -ne 13 -or $v11QuietConfig.QuietCpuMaxHighBattery -ne 65 -or
+    if ($v11QuietConfig.Version -ne 14 -or $v11QuietConfig.QuietCpuMaxHighBattery -ne 65 -or
         $v11QuietConfig.QuietCpuMaxMediumBattery -ne 60 -or $v11QuietConfig.QuietCpuMaxLowBattery -ne 50 -or
         $v11QuietConfig.QuietCpuMediumThreshold -ne 70 -or $v11QuietConfig.QuietCpuLowThreshold -ne 30 -or
         $v11QuietConfig.QuietProcessRestartWindowSeconds -ne 600 -or $v11QuietConfig.QuietProcessCooldownSeconds -ne 1800) {
@@ -214,8 +218,8 @@ try {
     $v1State = [pscustomobject]@{ Version = 1; OriginalPlanGuid = $script:Guids.Balanced; HyperPlanGuid = '11111111-1111-1111-1111-111111111111'; QuietPlanGuid = '22222222-2222-2222-2222-222222222222' }
     Write-JsonFile $script:StatePath $v1State
     $migratedState = Get-AppState
-    if ($migratedState.Version -ne 10) { throw 'v1 state version migration failed.' }
-    foreach ($property in @('BalancePlanGuid', 'DisabledWakeDevices', 'ServicesStoppedByUs', 'AdvancedColorStates', 'CapturedBrightness')) {
+    if ($migratedState.Version -ne 11) { throw 'v1 state version migration failed.' }
+    foreach ($property in @('BalancePlanGuid', 'ExperimentPlanGuid', 'DisabledWakeDevices', 'ServicesStoppedByUs', 'AdvancedColorStates', 'CapturedBrightness', 'DisplayStateSnapshot', 'ExperimentSession')) {
         if ($null -eq $migratedState.PSObject.Properties[$property]) { throw "Missing migrated state property: $property" }
     }
 

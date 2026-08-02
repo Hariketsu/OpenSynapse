@@ -2,17 +2,17 @@
 
 ## Release runtime
 
-OpenSynapse 2.4.6 uses the PowerPilot 2.4.1 execution model because that model has already passed the target-machine installation, power-policy, display, DPI and stability test suite.
+OpenSynapse 2.5.0 uses the PowerPilot 2.4.1 execution model because that model has already passed the target-machine installation, power-policy, display, DPI and stability test suite.
 
 ```mermaid
 flowchart TD
     Task["Per-user scheduled task\nhighest privileges, STA, delayed logon start"]
-    Script["OpenSynapse.ps1\nWinForms UI, tray and automation loop"]
+    Script["OpenSynapse.ps1\nWinForms UI, tray, automation and Experiment lock"]
     Native["OpenSynapse.Native.cs\ndynamically compiled native helpers"]
     Config["%LOCALAPPDATA%\\OpenSynapse\nconfig, state, runtime, log and telemetry"]
     Windows["Windows APIs and powercfg"]
     Supply["Power status and cached read-only NVIDIA evidence"]
-    Display["DisplayConfig, brightness, HDR and scaling"]
+    Display["DisplayConfig, ICC, WMI/DDC brightness, HDR, DRR and scaling"]
     HID["DeathAdder V3 Pro HID feature reports"]
 
     Task --> Script
@@ -34,10 +34,11 @@ The script is the product entry point and owns:
 
 - installation, upgrade migration, uninstallation and the Start menu shortcut;
 - the delayed highest-privilege scheduled task;
-- Auto, Hyper, Balance and Eco selection (`Quiet` remains the compatible internal enum);
+- Auto, Hyper, Balance, Eco and locked Experiment selection (`Quiet` remains the compatible internal enum);
 - supply classification, debounce and Smart Auto hysteresis;
 - application rules, temporary modes and runtime health backoff;
-- reversible power, brightness, HDR, scaling, refresh, wake-device and maintenance state;
+- reversible per-display mode, ICC, WMI/DDC brightness, HDR, DRR, scaling, power, wake-device and maintenance state;
+- Experiment start/drift/end/restored reports with a SHA-256 sidecar;
 - the five-page WinForms UI, custom title bar, tray menu, diagnostics and exports;
 - calls into the native display, telemetry and Razer HID helpers.
 
@@ -49,8 +50,8 @@ Windows PowerShell 5.1 dynamically compiles this helper with `Add-Type`. It cont
 
 - per-monitor DPI and taskbar AppUserModelID;
 - custom window dragging, dark frames and dark controls;
-- CPU, battery, foreground-window, GPU and power-event telemetry;
-- display mode, native dynamic refresh, scaling and Advanced Color operations;
+- CPU, battery, foreground-window, GPU/NPU availability, thermal/throttle and power-event telemetry;
+- display mode, native dynamic refresh, ICC, WMI/DDC brightness, scaling and Advanced Color operations with read-back verification;
 - capability-gated DeathAdder V3 Pro HID discovery and feature reports.
 
 The Razer path accepts only VID `1532`, PIDs `00B6`, `00B7`, `00C2` or `00C3`, and HID Usage Page `0x0C`. DPI is limited to 100–30000; standard-receiver polling is limited to 125, 500 or 1000 Hz. Responses must match the transaction, command class, command ID and checksum.
@@ -66,16 +67,19 @@ This is a user-mode HID feature-report implementation. It does not install a ker
 Configuration and rollback state are separate under `%LOCALAPPDATA%\OpenSynapse`:
 
 - `config.json` contains the persistent user selection and policy settings;
-- `state.json` contains original and managed power-plan identities plus reversible wake, service, brightness and color state;
+- `state.json` contains original and managed power-plan identities, Experiment session state and a complete reversible per-display snapshot;
 - `runtime.json` identifies the live tray process and health;
 - `OpenSynapse.log` records bounded local events;
 - `telemetry.jsonl` stores the rotating local telemetry history.
+- `experiment-reports` stores JSON/HTML/SHA-256 research environment evidence.
 
 The runtime retains PowerPilot 2.4.1's atomic JSON replacement and `.bak` recovery behavior. A transient monitor failure does not switch profiles blindly: the last verified plan is preserved and monitoring backs off through 10/20/40/60-second retries. Healthy monitoring remains at 5 seconds on external power and dynamically expands to 10 or 15 seconds on battery.
 
 Battery high-drain notification uses a native per-process CPU delta sampler at a separate 30-second cadence. Two consecutive samples and at least 14 W of correlated discharge are required before a local notification. The sampler is reset across AC/DC transitions, excludes system/OpenSynapse processes, and cannot stop applications.
 
 When the internal-panel Auto dynamic-refresh request fails application or read-back verification, the display path disables the failed boost state and falls back to fixed internal Eco 60 Hz. External displays remain at the maximum refresh rate supported for their active mode.
+
+Experiment uses a dedicated power plan and a full post-application display baseline. The monitor loop compares actual state against that baseline, repairs drift, and preserves the session until the original pre-experiment state verifies successfully. Automatic reports do not wake an inactive NVIDIA dGPU on battery, and normal battery hardware/display telemetry is cached for 60 seconds.
 
 ## Test boundary
 

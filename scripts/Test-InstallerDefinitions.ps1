@@ -39,9 +39,17 @@ foreach ($required in @(
         throw "Installer runtime definition is missing: $required"
     }
 }
-foreach ($required in @('src\OpenSynapse.PowerShell', 'OpenSynapse-2.4.6.zip', 'Compress-Archive')) {
+foreach ($required in @('src\OpenSynapse.PowerShell', 'OpenSynapse-2.5.0.zip', 'Compress-Archive')) {
     if ($publishSource.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "Publisher definition is missing: $required"
+    }
+}
+foreach ($commandPath in @(
+    (Join-Path $root 'src\OpenSynapse.PowerShell\Install-OpenSynapse.cmd'),
+    (Join-Path $root 'src\OpenSynapse.PowerShell\Uninstall-OpenSynapse.cmd')
+)) {
+    if ((Get-Content -Raw -LiteralPath $commandPath).IndexOf('OpenSynapse 2.5.0', [StringComparison]::Ordinal) -lt 0) {
+        throw "Command wrapper version is stale: $commandPath"
     }
 }
 if ($installSource.IndexOf('-Mode Install', [StringComparison]::Ordinal) -lt 0) {

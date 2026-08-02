@@ -28,6 +28,7 @@ $definitionTests = @(
     'Test-HyperPerformance.ps1',
     'Test-QuietEndurance.ps1',
     'Test-QuietControlSemantics.ps1',
+    'Test-ExperimentEnvironment.ps1',
     'Test-SupplyRefreshDefinition.ps1',
     'Test-SupplyDebounce.ps1',
     'Test-PowerEventCoalescing.ps1',
