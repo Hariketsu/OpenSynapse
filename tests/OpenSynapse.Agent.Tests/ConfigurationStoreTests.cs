@@ -33,7 +33,7 @@ public sealed class ConfigurationStoreTests
         Assert.IsTrue(config.ManageAdvancedColor);
         Assert.IsTrue(config.ManageBrightness);
         Assert.IsTrue(config.ManageDisplayScaling);
-        Assert.AreEqual(RefreshPolicy.FollowMode, config.RefreshPolicy);
+        Assert.AreEqual(RefreshPolicy.Auto, config.RefreshPolicy);
         Assert.AreEqual(150, config.InternalDisplayScalePercent);
         Assert.AreEqual(125, config.ExternalDisplayScalePercent);
         Assert.IsFalse(config.ManageWakeDevices);
@@ -103,7 +103,7 @@ public sealed class ConfigurationStoreTests
 
         Assert.AreEqual(ModeSelection.Performance, updated.Selection);
         Assert.AreEqual(settings, updated.ToDisplayPolicySettings());
-        Assert.AreEqual(RefreshPolicy.FollowMode, original.RefreshPolicy);
+        Assert.AreEqual(RefreshPolicy.Auto, original.RefreshPolicy);
     }
 
     [TestMethod]
@@ -154,6 +154,6 @@ public sealed class ConfigurationStoreTests
         StringAssert.Contains(
             File.ReadAllText(configPath),
             $"\"schemaVersion\":{OpenSynapseConfig.CurrentSchemaVersion}");
-        StringAssert.Contains(File.ReadAllText(configPath), "\"refreshPolicy\":\"FollowMode\"");
+        StringAssert.Contains(File.ReadAllText(configPath), "\"refreshPolicy\":\"Auto\"");
     }
 }

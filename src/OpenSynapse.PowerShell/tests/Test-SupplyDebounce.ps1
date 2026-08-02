@@ -45,11 +45,50 @@ if ($held -ne 'HighPowerAC') { throw 'Unknown AC did not retain the trusted high
 $battery = Resolve-StableSupplyType Battery Battery 6 $start.AddSeconds(47)
 if ($battery -ne 'Battery') { throw 'Battery transition was not immediate.' }
 
+# Regression trace from the target machine: a 280W adapter briefly exposed a
+# 91.86W NVIDIA enforced limit, then settled at 105W. Neither value is strong PD
+# evidence and a Balance/Other cold start must never classify this trace as PD.
+Initialize-SupplyStabilizer Balance
+$script:SupplyStabilizerStartedAt = $start
+$falseHighAdapterTrace = @(
+    (Resolve-StableSupplyType AC (Resolve-SupplyType AC 91.86) 1 $start.AddSeconds(2)),
+    (Resolve-StableSupplyType AC (Resolve-SupplyType AC 105.0) 2 $start.AddSeconds(30)),
+    (Resolve-StableSupplyType AC (Resolve-SupplyType AC 105.0) 3 $start.AddSeconds(37)),
+    (Resolve-StableSupplyType AC (Resolve-SupplyType AC 105.0) 4 $start.AddSeconds(44))
+)
+if (@($falseHighAdapterTrace | Where-Object { $_ -eq 'LowPowerPD' }).Count -ne 0) {
+    throw "280W regression trace was classified as PD: $($falseHighAdapterTrace -join '/')"
+}
+
+# A genuine PD trace in the observed 76-79W cluster is confirmed only after the
+# common startup warm-up and three spaced samples, even without a seeded profile.
+Initialize-SupplyStabilizer Other
+$script:SupplyStabilizerStartedAt = $start
+$coldLow = Resolve-StableSupplyType AC (Resolve-SupplyType AC 78.74) 1 $start.AddSeconds(2)
+$realPdFirst = Resolve-StableSupplyType AC (Resolve-SupplyType AC 78.74) 2 $start.AddSeconds(30)
+$realPdSecond = Resolve-StableSupplyType AC (Resolve-SupplyType AC 76.09) 3 $start.AddSeconds(37)
+$realPdThird = Resolve-StableSupplyType AC (Resolve-SupplyType AC 79.32) 4 $start.AddSeconds(44)
+if ($coldLow -ne 'UnknownAC' -or $realPdFirst -ne 'UnknownAC' -or
+    $realPdSecond -ne 'UnknownAC' -or $realPdThird -ne 'LowPowerPD') {
+    throw "Cold-start PD debounce failed: $coldLow/$realPdFirst/$realPdSecond/$realPdThird"
+}
+
+# Manual Quiet is not pre-seeded as PD. A real >=130W adapter reading therefore
+# still releases the Quiet lock immediately instead of waiting for a later probe.
+Initialize-SupplyStabilizer Quiet
+$script:SupplyStabilizerStartedAt = $start
+$quietColdLow = Resolve-StableSupplyType AC (Resolve-SupplyType AC 80.0) 1 $start.AddSeconds(2)
+$quietHigh = Resolve-StableSupplyType AC (Resolve-SupplyType AC 151.62) 2 $start.AddSeconds(3)
+if ($quietColdLow -ne 'UnknownAC' -or $quietHigh -ne 'HighPowerAC') {
+    throw "Manual Quiet adapter recovery failed: $quietColdLow/$quietHigh"
+}
+
 $source = Get-Content -Raw -LiteralPath $mainScript
 foreach ($required in @(
     '$script:AdapterStartupWarmupSeconds = 30',
     '$script:AdapterLowConfirmationSamples = 3',
     '$script:AdapterConfirmationIntervalSeconds = 7',
+    '$script:LowPowerAdapterThresholdW = 85.0',
     'Apply-CurrentSelection -Full -ApplyVisualPolicy -RepairScaling',
     'SeamlessModeSwitching = $true'
 )) {
@@ -75,6 +114,9 @@ $result = [pscustomobject]@{
     ConfirmationSpanSeconds = 14
     ImmediateHighPowerPromotion = $true
     ImmediateBatteryFallback = $true
+    ColdStartFalseHighAdapterTraceRejected = $true
+    ColdStartRealPdDebounced = $true
+    ManualQuietHighPowerRecovery = $true
     SeamlessModeSwitchingDefault = $true
     ExplicitDisplayApplyPaths = $visualApplyCalls
     ChangedSystemSettings = $false

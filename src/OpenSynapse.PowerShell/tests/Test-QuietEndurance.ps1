@@ -17,7 +17,7 @@ $nativeSourcePath = Join-Path $project 'OpenSynapse.Native.cs'
 . $mainScript -Mode SelfTest
 
 $config = Get-DefaultConfig
-if ($config.Version -ne 11 -or -not $config.AdaptiveQuietBrightness -or -not $config.AdaptiveQuietCpu -or
+if ($config.Version -ne 13 -or -not $config.AdaptiveQuietBrightness -or -not $config.AdaptiveQuietCpu -or
     $config.ProcessMaintenanceSeconds -ne 180 -or $config.QuietCpuMediumThreshold -ne 70 -or
     $config.QuietCpuLowThreshold -ne 30) {
     throw 'Quiet endurance defaults are incomplete.'

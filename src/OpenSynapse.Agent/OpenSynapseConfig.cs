@@ -5,7 +5,7 @@ namespace OpenSynapse.Agent;
 
 internal sealed class OpenSynapseConfig
 {
-    public const int CurrentSchemaVersion = 10;
+    public const int CurrentSchemaVersion = 11;
 
     public int SchemaVersion { get; set; } = CurrentSchemaVersion;
     public ModeSelection Selection { get; set; } = ModeSelection.Auto;
@@ -13,7 +13,7 @@ internal sealed class OpenSynapseConfig
     public bool ManageAdvancedColor { get; set; } = true;
     public bool ManageBrightness { get; set; } = true;
     public bool ManageDisplayScaling { get; set; } = true;
-    public RefreshPolicy RefreshPolicy { get; set; } = RefreshPolicy.FollowMode;
+    public RefreshPolicy RefreshPolicy { get; set; } = RefreshPolicy.Auto;
     public int InternalDisplayScalePercent { get; set; } = 150;
     public int ExternalDisplayScalePercent { get; set; } = 125;
     public int BalancedBrightnessPercent { get; set; } = 60;
@@ -259,7 +259,10 @@ internal sealed class ConfigurationStore
         if (config.SchemaVersion > OpenSynapseConfig.CurrentSchemaVersion)
             throw new NotSupportedException(
                 $"Configuration schema {config.SchemaVersion} is newer than supported schema {OpenSynapseConfig.CurrentSchemaVersion}.");
-        var requiresMigration = config.SchemaVersion < OpenSynapseConfig.CurrentSchemaVersion;
+        var previousSchemaVersion = config.SchemaVersion;
+        var requiresMigration = previousSchemaVersion < OpenSynapseConfig.CurrentSchemaVersion;
+        if (previousSchemaVersion < 11 && config.RefreshPolicy == RefreshPolicy.FollowMode)
+            config.RefreshPolicy = RefreshPolicy.Auto;
         config.SchemaVersion = OpenSynapseConfig.CurrentSchemaVersion;
         config.QuietWakeDeviceNames ??= [];
         config.SmartIgnoredFullscreenProcesses ??= [];
@@ -316,12 +319,15 @@ internal sealed class ConfigurationStore
             {
                 config.RefreshPolicy = refresh switch
                 {
+                    "Auto" => RefreshPolicy.Auto,
+                    "FollowMode" => RefreshPolicy.Auto,
+                    "FollowProfile" => RefreshPolicy.Auto,
                     "DynamicNative" => RefreshPolicy.DynamicNative,
                     "Fixed60" => RefreshPolicy.Fixed60,
                     "Fixed120" => RefreshPolicy.Fixed120,
                     "Fixed240" => RefreshPolicy.Fixed240,
                     "Unmanaged" => RefreshPolicy.Unmanaged,
-                    _ => RefreshPolicy.FollowMode
+                    _ => RefreshPolicy.Auto
                 };
             }
             config.SmartHighPowerCpuEnter = TryGetInt(root, "SmartHighPowerCpuEnter") ?? config.SmartHighPowerCpuEnter;

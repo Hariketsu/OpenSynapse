@@ -533,9 +533,30 @@ namespace PowerPilotNative
             return changed;
         }
 
+        public static int ApplyMaximumRefresh(string[] deviceNames)
+        {
+            if (deviceNames is null || deviceNames.Length == 0) return 0;
+            var selected = new HashSet<string>(deviceNames, StringComparer.OrdinalIgnoreCase);
+            var changed = 0;
+            foreach (var device in GetActiveDevices())
+                if (selected.Contains(device.DeviceName))
+                    changed += ApplyFrequency(device, true, 60);
+            return changed;
+        }
+
         public static int ApplyFixedRefresh(int targetHz)
         {
-            List<DISPLAY_DEVICE> devices = GetActiveDevices();
+            return ApplyFixedRefresh(targetHz, null);
+        }
+
+        public static int ApplyFixedRefresh(int targetHz, string[]? deviceNames)
+        {
+            var devices = GetActiveDevices();
+            if (deviceNames is not null)
+            {
+                var selected = new HashSet<string>(deviceNames, StringComparer.OrdinalIgnoreCase);
+                devices = devices.FindAll(device => selected.Contains(device.DeviceName));
+            }
             foreach (DISPLAY_DEVICE device in devices)
             {
                 DEVMODE current = NewMode();

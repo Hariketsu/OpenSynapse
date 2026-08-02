@@ -2,7 +2,7 @@
 
 ## Release runtime
 
-OpenSynapse 2.4.2 uses the PowerPilot 2.4.1 execution model because that model has already passed the target-machine installation, power-policy, display, DPI and stability test suite.
+OpenSynapse 2.4.6 uses the PowerPilot 2.4.1 execution model because that model has already passed the target-machine installation, power-policy, display, DPI and stability test suite.
 
 ```mermaid
 flowchart TD
@@ -34,7 +34,7 @@ The script is the product entry point and owns:
 
 - installation, upgrade migration, uninstallation and the Start menu shortcut;
 - the delayed highest-privilege scheduled task;
-- Auto, Hyper, Balance and Quiet selection;
+- Auto, Hyper, Balance and Eco selection (`Quiet` remains the compatible internal enum);
 - supply classification, debounce and Smart Auto hysteresis;
 - application rules, temporary modes and runtime health backoff;
 - reversible power, brightness, HDR, scaling, refresh, wake-device and maintenance state;
@@ -71,7 +71,11 @@ Configuration and rollback state are separate under `%LOCALAPPDATA%\OpenSynapse`
 - `OpenSynapse.log` records bounded local events;
 - `telemetry.jsonl` stores the rotating local telemetry history.
 
-The runtime retains PowerPilot 2.4.1's atomic JSON replacement and `.bak` recovery behavior. A transient monitor failure does not switch profiles blindly: the last verified plan is preserved and monitoring backs off through 10/20/40/60-second retries.
+The runtime retains PowerPilot 2.4.1's atomic JSON replacement and `.bak` recovery behavior. A transient monitor failure does not switch profiles blindly: the last verified plan is preserved and monitoring backs off through 10/20/40/60-second retries. Healthy monitoring remains at 5 seconds on external power and dynamically expands to 10 or 15 seconds on battery.
+
+Battery high-drain notification uses a native per-process CPU delta sampler at a separate 30-second cadence. Two consecutive samples and at least 14 W of correlated discharge are required before a local notification. The sampler is reset across AC/DC transitions, excludes system/OpenSynapse processes, and cannot stop applications.
+
+When the internal-panel Auto dynamic-refresh request fails application or read-back verification, the display path disables the failed boost state and falls back to fixed internal Eco 60 Hz. External displays remain at the maximum refresh rate supported for their active mode.
 
 ## Test boundary
 

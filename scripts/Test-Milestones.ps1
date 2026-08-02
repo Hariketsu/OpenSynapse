@@ -22,6 +22,7 @@ $definitionTests = @(
     'Test-AutomationGuards.ps1',
     'Test-SafeTelemetryAutomation.ps1',
     'Test-BatteryTelemetryTrend.ps1',
+    'Test-BatteryHighDrainAlerts.ps1',
     'Test-StabilityExperience.ps1',
     'Test-PowerPolicyDefinition.ps1',
     'Test-HyperPerformance.ps1',

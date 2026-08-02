@@ -16,13 +16,18 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $script:AppName = 'OpenSynapse'
-$script:AppVersion = '2.4.2'
+$script:AppVersion = '2.4.6'
 $script:AppUserModelId = 'OpenSynapse.Desktop'
 $script:TaskName = 'OpenSynapse'
 $script:LegacyAgentTaskName = 'OpenSynapse Agent'
 $script:LegacyPowerPilotTaskName = 'PowerPilot'
 $script:ProgramDir = Join-Path $env:ProgramFiles $script:AppName
-$script:DataDir = Join-Path $env:LOCALAPPDATA $script:AppName
+$script:DataDir = if ($Mode -eq 'SelfTest') {
+    Join-Path ([IO.Path]::GetTempPath()) 'OpenSynapse-SelfTest'
+}
+else {
+    Join-Path $env:LOCALAPPDATA $script:AppName
+}
 $script:InstalledScript = Join-Path $script:ProgramDir 'OpenSynapse.ps1'
 $script:InstalledNative = Join-Path $script:ProgramDir 'OpenSynapse.Native.cs'
 $script:SourceDir = Split-Path -Parent $PSCommandPath
@@ -39,7 +44,8 @@ $script:RuntimePath = Join-Path $script:DataDir 'runtime.json'
 $script:ShowRequestPath = Join-Path $script:DataDir 'show.request'
 $script:LogPath = Join-Path $script:DataDir 'OpenSynapse.log'
 $script:TelemetryPath = Join-Path $script:DataDir 'telemetry.jsonl'
-$script:TelemetrySchemaVersion = 2
+$script:TelemetrySchemaVersion = 5
+$script:SupplyClassifierVersion = 2
 $script:ShortcutPath = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\OpenSynapse.lnk'
 $script:LegacyDotNetConfigDetected = $false
 $script:RunKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
@@ -47,7 +53,7 @@ $script:DesktopSnipasteExecutable = Join-Path $env:ProgramFiles 'Snipaste\Snipas
 $script:SnipasteStoreStartupTaskKey = 'HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData\45479liulios.17062D84F7C46_p7pnf6hceqser\SnipasteStartupTask'
 $script:PowerCfg = Join-Path $env:SystemRoot 'System32\powercfg.exe'
 $script:HighPowerAdapterThresholdW = 130.0
-$script:LowPowerAdapterThresholdW = 100.0
+$script:LowPowerAdapterThresholdW = 85.0
 $script:AdapterProbeIntervalSeconds = 300
 $script:AdapterConfirmationIntervalSeconds = 7
 $script:AdapterLowConfirmationSamples = 3
@@ -64,6 +70,8 @@ $script:PendingLowPowerSince = [DateTime]::MinValue
 $script:LastStabilizedProbeSequence = -1
 $script:SupplyStabilizerStartedAt = Get-Date
 $script:NextAdapterConfirmationProbe = [DateTime]::MaxValue
+$script:LastDynamicRefreshDeferredLog = [DateTime]::MinValue
+$script:LastGpuTelemetryIntervalMs = 0
 $script:LastAppliedQuietCpuMax = $null
 $script:LastAppliedHyperCpuPolicy = $null
 $script:BatteryPowerSamples = New-Object Collections.Generic.List[object]
@@ -131,6 +139,28 @@ $script:DefaultQuietProcesses = @(
     'ArmourySocketServer',
     'ArmourySwAgent',
     'asus_framework'
+)
+
+$script:DefaultBatteryHighDrainIgnoredProcesses = @(
+    'Idle',
+    'System',
+    'Registry',
+    'Secure System',
+    'Memory Compression',
+    'Interrupts',
+    'powershell',
+    'pwsh',
+    'OpenSynapse',
+    'OpenSynapse.App',
+    'OpenSynapse.Agent',
+    'conhost',
+    'csrss',
+    'wininit',
+    'winlogon',
+    'services',
+    'lsass',
+    'svchost',
+    'dwm'
 )
 
 $script:DefaultQuietServices = @(
@@ -387,7 +417,7 @@ function Get-DefaultConfig {
         }
     )
     return [pscustomobject][ordered]@{
-        Version = 11
+        Version = 13
         Selection = 'Auto'
         SmartAutomationEnabled = $true
         SmartHighPowerCpuEnter = 45
@@ -405,6 +435,10 @@ function Get-DefaultConfig {
         SmartFullscreenCpuFloor = 15
         SmartFullscreenGpuFloor = 15
         SmartIgnoredFullscreenProcesses = @('LockApp', 'LogonUI', 'explorer', 'ShellExperienceHost', 'StartMenuExperienceHost', 'SearchHost', 'SearchApp', 'TextInputHost', 'SystemSettings', 'dwm', 'Idle')
+        SmartBrowserProcesses = @('chrome', 'msedge', 'firefox', 'brave', 'opera', 'vivaldi')
+        SmartBrowserFullscreenCpuFloor = 45
+        SmartBrowserFullscreenGpuFloor = 20
+        SmartBrowserFullscreenSamples = 3
         SmartHyperProcessNames = @('blender', 'Resolve', 'Adobe Premiere Pro', 'AfterFX', 'UnrealEditor', 'UE4Editor', 'Unity', '3dsmax', 'maya', 'Cinebench', 'occt', 'FurMark', 'FurMark_GUI')
         SmartBalanceProcessNames = @('Codex', 'Code', 'devenv', 'WINWORD', 'EXCEL', 'POWERPNT', 'Acrobat', 'AcroRd32')
         ApplicationRules = $applicationRules
@@ -412,6 +446,17 @@ function Get-DefaultConfig {
         DgpuLeakUtilizationPercent = 1
         DgpuLeakMinimumSamples = 6
         DgpuActivityDischargeThresholdW = 8
+        GpuTelemetryHighPowerIntervalSeconds = 5
+        GpuTelemetryPortableIntervalSeconds = 10
+        GpuTelemetryManualQuietIntervalSeconds = 20
+        BatteryHighDrainAlertsEnabled = $true
+        BatteryHighDrainSampleSeconds = 30
+        BatteryHighDrainCpuPercent = 15
+        BatteryHighDrainMinimumSamples = 2
+        BatteryHighDrainMinimumDischargeW = 14
+        BatteryHighDrainCooldownMinutes = 30
+        BatteryHighDrainMaximumProcesses = 3
+        BatteryHighDrainIgnoredProcesses = @($script:DefaultBatteryHighDrainIgnoredProcesses)
         HyperCpuPolicy = 'Sustained'
         CloseHighDrainAppsInQuiet = $true
         QuietProcessNames = @($script:DefaultQuietProcesses)
@@ -433,7 +478,7 @@ function Get-DefaultConfig {
         ExternalScale = 125
         ManageRefreshRate = $true
         QuietRefreshRate = 60
-        RefreshPolicy = 'FollowProfile'
+        RefreshPolicy = 'Auto'
         ManageAdvancedColor = $true
         ManageBrightness = $true
         QuietBrightness = 40
@@ -500,12 +545,27 @@ function Convert-LegacyDotNetConfig {
         'SmartFullscreenCpuFloor' = 'SmartFullscreenCpuFloor'
         'SmartFullscreenGpuFloor' = 'SmartFullscreenGpuFloor'
         'SmartIgnoredFullscreenProcesses' = 'SmartIgnoredFullscreenProcesses'
+        'SmartBrowserProcesses' = 'SmartBrowserProcesses'
+        'SmartBrowserFullscreenCpuFloor' = 'SmartBrowserFullscreenCpuFloor'
+        'SmartBrowserFullscreenGpuFloor' = 'SmartBrowserFullscreenGpuFloor'
+        'SmartBrowserFullscreenSamples' = 'SmartBrowserFullscreenSamples'
         'SmartHyperProcessNames' = 'SmartHyperProcessNames'
         'SmartBalanceProcessNames' = 'SmartBalanceProcessNames'
         'DgpuLeakMemoryMb' = 'DgpuLeakMemoryMb'
         'DgpuLeakUtilizationPercent' = 'DgpuLeakUtilizationPercent'
         'DgpuLeakMinimumSamples' = 'DgpuLeakMinimumSamples'
         'DgpuActivityDischargeThresholdW' = 'DgpuActivityDischargeThresholdW'
+        'GpuTelemetryHighPowerIntervalSeconds' = 'GpuTelemetryHighPowerIntervalSeconds'
+        'GpuTelemetryPortableIntervalSeconds' = 'GpuTelemetryPortableIntervalSeconds'
+        'GpuTelemetryManualQuietIntervalSeconds' = 'GpuTelemetryManualQuietIntervalSeconds'
+        'BatteryHighDrainAlertsEnabled' = 'BatteryHighDrainAlertsEnabled'
+        'BatteryHighDrainSampleSeconds' = 'BatteryHighDrainSampleSeconds'
+        'BatteryHighDrainCpuPercent' = 'BatteryHighDrainCpuPercent'
+        'BatteryHighDrainMinimumSamples' = 'BatteryHighDrainMinimumSamples'
+        'BatteryHighDrainMinimumDischargeW' = 'BatteryHighDrainMinimumDischargeW'
+        'BatteryHighDrainCooldownMinutes' = 'BatteryHighDrainCooldownMinutes'
+        'BatteryHighDrainMaximumProcesses' = 'BatteryHighDrainMaximumProcesses'
+        'BatteryHighDrainIgnoredProcesses' = 'BatteryHighDrainIgnoredProcesses'
         'HyperCpuPolicy' = 'HyperCpuPolicy'
         'AdaptiveQuietCpu' = 'AdaptiveQuietCpu'
         'QuietCpuMaxHighBattery' = 'QuietCpuMaxHighBattery'
@@ -542,15 +602,16 @@ function Convert-LegacyDotNetConfig {
     $refreshProperty = Get-ObjectProperty $Config 'RefreshPolicy'
     if ($null -ne $refreshProperty) {
         $migrated.RefreshPolicy = switch ([string]$refreshProperty.Value) {
-            'FollowMode' { 'FollowProfile'; break }
-            'FollowProfile' { 'FollowProfile'; break }
+            'Auto' { 'Auto'; break }
+            'FollowMode' { 'Auto'; break }
+            'FollowProfile' { 'Auto'; break }
             'Maximum' { 'Fixed240'; break }
             'Fixed60' { 'Fixed60'; break }
-            'Fixed120' { 'Fixed120'; break }
+            'Fixed120' { 'Auto'; break }
             'Fixed240' { 'Fixed240'; break }
-            'DynamicNative' { 'DynamicNative'; break }
+            'DynamicNative' { 'Auto'; break }
             'Unmanaged' { 'Unmanaged'; break }
-            default { 'FollowProfile' }
+            default { 'Auto' }
         }
         $migrated.ManageRefreshRate = ([string]$migrated.RefreshPolicy -ne 'Unmanaged')
     }
@@ -618,13 +679,15 @@ function Get-AppConfig {
         $config.QuietProcessNames = @($mergedProcesses)
     }
     if ($oldVersion -lt 3) {
-        $config.RefreshPolicy = if ([bool]$config.ManageRefreshRate) { 'FollowProfile' } else { 'Unmanaged' }
+        $config.RefreshPolicy = if ([bool]$config.ManageRefreshRate) { 'Auto' } else { 'Unmanaged' }
     }
     if ([string]$config.Selection -notin @('Auto', 'Hyper', 'Balance', 'Quiet')) { $config.Selection = 'Auto' }
     if ([string]$config.HyperCpuPolicy -notin @('Sustained', 'Latency')) { $config.HyperCpuPolicy = 'Sustained' }
-    if ([string]$config.RefreshPolicy -eq 'Dynamic60To120') { $config.RefreshPolicy = 'Fixed120' }
-    if ([string]$config.RefreshPolicy -notin @('FollowProfile', 'Fixed60', 'Fixed120', 'Fixed240', 'DynamicNative', 'Unmanaged')) {
-        $config.RefreshPolicy = 'FollowProfile'
+    if ($oldVersion -lt 12 -and [string]$config.RefreshPolicy -in @('FollowProfile', 'FollowMode', 'Fixed120', 'DynamicNative', 'Dynamic60To120')) {
+        $config.RefreshPolicy = 'Auto'
+    }
+    if ([string]$config.RefreshPolicy -notin @('Auto', 'Fixed60', 'Fixed240', 'Unmanaged')) {
+        $config.RefreshPolicy = 'Auto'
     }
     $config.ManageRefreshRate = ([string]$config.RefreshPolicy -ne 'Unmanaged')
     if ($oldVersion -lt 5 -and [int]$config.ProcessMaintenanceSeconds -eq 30) {
@@ -668,11 +731,25 @@ function Get-AppConfig {
     $config.SmartGpuExit = [Math]::Max(0, [Math]::Min(($config.SmartGpuEnter - 1), [int]$config.SmartGpuExit))
     $config.SmartFullscreenCpuFloor = [Math]::Max(1, [Math]::Min(100, [int]$config.SmartFullscreenCpuFloor))
     $config.SmartFullscreenGpuFloor = [Math]::Max(1, [Math]::Min(100, [int]$config.SmartFullscreenGpuFloor))
+    $config.SmartBrowserFullscreenCpuFloor = [Math]::Max(1, [Math]::Min(100, [int]$config.SmartBrowserFullscreenCpuFloor))
+    $config.SmartBrowserFullscreenGpuFloor = [Math]::Max(1, [Math]::Min(100, [int]$config.SmartBrowserFullscreenGpuFloor))
+    $config.SmartBrowserFullscreenSamples = [Math]::Max(2, [Math]::Min(12, [int]$config.SmartBrowserFullscreenSamples))
     $config.DgpuLeakMemoryMb = [Math]::Max(32, [Math]::Min(16384, [int]$config.DgpuLeakMemoryMb))
     $config.DgpuLeakUtilizationPercent = [Math]::Max(0, [Math]::Min(100, [double]$config.DgpuLeakUtilizationPercent))
     $config.DgpuLeakMinimumSamples = [Math]::Max(2, [Math]::Min(60, [int]$config.DgpuLeakMinimumSamples))
     $config.DgpuActivityDischargeThresholdW = [Math]::Max(1, [Math]::Min(100, [double]$config.DgpuActivityDischargeThresholdW))
-    foreach ($propertyName in @('SmartHyperProcessNames', 'SmartBalanceProcessNames', 'SmartIgnoredFullscreenProcesses')) {
+    $config.GpuTelemetryHighPowerIntervalSeconds = [Math]::Max(2, [Math]::Min(60, [int]$config.GpuTelemetryHighPowerIntervalSeconds))
+    $config.GpuTelemetryPortableIntervalSeconds = [Math]::Max(5, [Math]::Min(120, [int]$config.GpuTelemetryPortableIntervalSeconds))
+    $config.GpuTelemetryManualQuietIntervalSeconds = [Math]::Max(
+        [int]$config.GpuTelemetryPortableIntervalSeconds,
+        [Math]::Min(300, [int]$config.GpuTelemetryManualQuietIntervalSeconds))
+    $config.BatteryHighDrainSampleSeconds = [Math]::Max(15, [Math]::Min(300, [int]$config.BatteryHighDrainSampleSeconds))
+    $config.BatteryHighDrainCpuPercent = [Math]::Max(5, [Math]::Min(400, [double]$config.BatteryHighDrainCpuPercent))
+    $config.BatteryHighDrainMinimumSamples = [Math]::Max(2, [Math]::Min(10, [int]$config.BatteryHighDrainMinimumSamples))
+    $config.BatteryHighDrainMinimumDischargeW = [Math]::Max(5, [Math]::Min(100, [double]$config.BatteryHighDrainMinimumDischargeW))
+    $config.BatteryHighDrainCooldownMinutes = [Math]::Max(5, [Math]::Min(240, [int]$config.BatteryHighDrainCooldownMinutes))
+    $config.BatteryHighDrainMaximumProcesses = [Math]::Max(1, [Math]::Min(5, [int]$config.BatteryHighDrainMaximumProcesses))
+    foreach ($propertyName in @('SmartHyperProcessNames', 'SmartBalanceProcessNames', 'SmartIgnoredFullscreenProcesses', 'SmartBrowserProcesses', 'BatteryHighDrainIgnoredProcesses')) {
         $normalizedNames = New-Object Collections.Generic.List[string]
         foreach ($item in @($config.$propertyName)) {
             $value = ([string]$item).Trim()
@@ -703,7 +780,7 @@ function Get-AppConfig {
         })
     }
     $config.ApplicationRules = $normalizedRules.ToArray()
-    $config.Version = 11
+    $config.Version = 13
     return $config
 }
 
@@ -828,7 +905,6 @@ function Initialize-SupplyStabilizer {
     param([ValidateSet('Hyper', 'Balance', 'Quiet', 'Other')][string]$ActiveProfile = 'Other')
     $script:StableAcSupplyType = switch ($ActiveProfile) {
         'Hyper' { 'HighPowerAC'; break }
-        'Quiet' { 'LowPowerPD'; break }
         default { $null }
     }
     $script:PendingLowPowerSamples = 0
@@ -887,19 +963,12 @@ function Resolve-StableSupplyType {
         $script:LastStabilizedProbeSequence = $ProbeSequence
         return 'LowPowerPD'
     }
-    if ($null -eq $script:StableAcSupplyType) {
-        $script:StableAcSupplyType = 'LowPowerPD'
-        $warmupUntil = $script:SupplyStabilizerStartedAt.AddSeconds($script:AdapterStartupWarmupSeconds)
-        if ($Now -lt $warmupUntil) { $script:NextAdapterConfirmationProbe = $warmupUntil }
-        $script:LastStabilizedProbeSequence = $ProbeSequence
-        return 'LowPowerPD'
-    }
-
     $warmupUntil = $script:SupplyStabilizerStartedAt.AddSeconds($script:AdapterStartupWarmupSeconds)
+    $heldSupplyType = if ($script:StableAcSupplyType -eq 'HighPowerAC') { 'HighPowerAC' } else { 'UnknownAC' }
     if ($Now -lt $warmupUntil) {
         $script:NextAdapterConfirmationProbe = $warmupUntil
         $script:LastStabilizedProbeSequence = $ProbeSequence
-        return 'HighPowerAC'
+        return $heldSupplyType
     }
 
     if ($ProbeSequence -ne $script:LastStabilizedProbeSequence) {
@@ -907,7 +976,7 @@ function Resolve-StableSupplyType {
         $script:PendingLowPowerSamples++
         $script:LastStabilizedProbeSequence = $ProbeSequence
         $script:NextAdapterConfirmationProbe = $Now.AddSeconds($script:AdapterConfirmationIntervalSeconds)
-        Write-AppLog "Supply downgrade pending: LowPowerPD sample $($script:PendingLowPowerSamples)/$($script:AdapterLowConfirmationSamples); holding HighPowerAC."
+        Write-AppLog "Supply downgrade pending: LowPowerPD sample $($script:PendingLowPowerSamples)/$($script:AdapterLowConfirmationSamples); holding $heldSupplyType."
     }
     $minimumSpan = $script:AdapterConfirmationIntervalSeconds * ($script:AdapterLowConfirmationSamples - 1)
     if ($script:PendingLowPowerSamples -ge $script:AdapterLowConfirmationSamples -and
@@ -919,7 +988,7 @@ function Resolve-StableSupplyType {
         Write-AppLog 'Supply downgrade confirmed: LowPowerPD after three consecutive samples.'
         return 'LowPowerPD'
     }
-    return 'HighPowerAC'
+    return $heldSupplyType
 }
 
 function Get-SupplyDisplayName {
@@ -1106,7 +1175,7 @@ function Get-PowerSnapshot {
         BatteryEstimatedHours = $batteryTrend.EstimatedHours
         BatteryEstimateConfidence = $batteryTrend.Confidence
         BatteryTrendSampleCount = $batteryTrend.SampleCount
-        SupplyConfirmationPending = ($source -eq 'AC' -and $rawSupplyType -eq 'LowPowerPD' -and $supplyType -eq 'HighPowerAC')
+        SupplyConfirmationPending = ($source -eq 'AC' -and $rawSupplyType -eq 'LowPowerPD' -and $supplyType -ne 'LowPowerPD')
     }
 }
 
@@ -1137,12 +1206,88 @@ function Resolve-SelectionAfterSupplyTransition {
         [AllowEmptyString()][string]$PreviousSupplyType,
         [AllowEmptyString()][string]$CurrentSupplyType
     )
-    $highPowerWasJustConnected =
+    $verifiedHighPowerBecameAvailable =
+        ([string]::IsNullOrWhiteSpace($PreviousSupplyType) -or
+         -not [string]::Equals($PreviousSupplyType, 'HighPowerAC', [StringComparison]::OrdinalIgnoreCase)) -and
+        [string]::Equals($CurrentSupplyType, 'HighPowerAC', [StringComparison]::OrdinalIgnoreCase)
+    if ($Selection -eq 'Quiet' -and $verifiedHighPowerBecameAvailable) { return 'Auto' }
+    return $Selection
+}
+
+function Resolve-RefreshPolicyAfterPowerTransition {
+    param(
+        [ValidateSet('Auto', 'Fixed60', 'Fixed240', 'Unmanaged')][string]$RefreshPolicy,
+        [AllowEmptyString()][string]$PreviousPowerSource,
+        [AllowEmptyString()][string]$CurrentPowerSource,
+        [AllowEmptyString()][string]$PreviousSupplyType = '',
+        [AllowEmptyString()][string]$CurrentSupplyType = '',
+        [AllowEmptyString()][string]$PreviousSelection = '',
+        [AllowEmptyString()][string]$CurrentSelection = ''
+    )
+    $manualEcoWasReleased =
+        [string]::Equals($PreviousSelection, 'Quiet', [StringComparison]::OrdinalIgnoreCase) -and
+        [string]::Equals($CurrentSelection, 'Auto', [StringComparison]::OrdinalIgnoreCase) -and
+        [string]::Equals($CurrentSupplyType, 'HighPowerAC', [StringComparison]::OrdinalIgnoreCase)
+    if ($manualEcoWasReleased) { return 'Auto' }
+
+    $externalPowerWasConnected =
+        -not [string]::IsNullOrWhiteSpace($PreviousPowerSource) -and
+        -not [string]::Equals($PreviousPowerSource, 'AC', [StringComparison]::OrdinalIgnoreCase) -and
+        [string]::Equals($CurrentPowerSource, 'AC', [StringComparison]::OrdinalIgnoreCase)
+    $verifiedHighPowerWasConnected =
         -not [string]::IsNullOrWhiteSpace($PreviousSupplyType) -and
         -not [string]::Equals($PreviousSupplyType, 'HighPowerAC', [StringComparison]::OrdinalIgnoreCase) -and
         [string]::Equals($CurrentSupplyType, 'HighPowerAC', [StringComparison]::OrdinalIgnoreCase)
-    if ($Selection -eq 'Quiet' -and $highPowerWasJustConnected) { return 'Auto' }
-    return $Selection
+    if ($RefreshPolicy -in @('Fixed60', 'Fixed240') -and ($externalPowerWasConnected -or $verifiedHighPowerWasConnected)) { return 'Auto' }
+    return $RefreshPolicy
+}
+
+function Resolve-GpuTelemetryIntervalMilliseconds {
+    param(
+        [object]$Config,
+        [object]$Snapshot,
+        [ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet')][string]$Selection
+    )
+    $seconds = if ($Selection -eq 'Quiet') {
+        [int]$Config.GpuTelemetryManualQuietIntervalSeconds
+    }
+    elseif ([string]$Snapshot.SupplyType -eq 'HighPowerAC') {
+        [int]$Config.GpuTelemetryHighPowerIntervalSeconds
+    }
+    else {
+        [int]$Config.GpuTelemetryPortableIntervalSeconds
+    }
+    return [Math]::Max(2000, $seconds * 1000)
+}
+
+function Update-GpuTelemetryCadence {
+    param(
+        [object]$Config,
+        [object]$Snapshot,
+        [ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet')][string]$Selection
+    )
+    $interval = Resolve-GpuTelemetryIntervalMilliseconds $Config $Snapshot $Selection
+    if ($interval -ne [int]$script:LastGpuTelemetryIntervalMs) {
+        [OpenSynapseNative.GpuTelemetry]::SetInterval($interval)
+        $script:LastGpuTelemetryIntervalMs = $interval
+        Write-AppLog "GPU telemetry cadence changed to $($interval / 1000)s for selection=$Selection supply=$($Snapshot.SupplyType)."
+    }
+    return $interval
+}
+
+function Resolve-MonitorIntervalMilliseconds {
+    param(
+        [AllowNull()][object]$Snapshot,
+        [AllowNull()][object]$AutomationState,
+        [ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet')][string]$Selection = 'Auto'
+    )
+    if ($null -eq $Snapshot -or [string]$Snapshot.Source -ne 'Battery') { return 5000 }
+    if ($Selection -eq 'Quiet' -or ($null -ne $AutomationState -and [bool]$AutomationState.SessionLocked)) { return 15000 }
+    $cpu = if ($null -ne $AutomationState) { [double]$AutomationState.LastCpuPercent } else { -1.0 }
+    $gpu = if ($null -ne $AutomationState) { [double]$AutomationState.LastGpuPercent } else { -1.0 }
+    $fullscreen = $null -ne $AutomationState -and [bool]$AutomationState.ForegroundFullscreen
+    if ($cpu -ge 15 -or $gpu -ge 5 -or $fullscreen) { return 10000 }
+    return 15000
 }
 
 function New-SmartAutomationState {
@@ -1165,6 +1310,156 @@ function New-SmartAutomationState {
         DgpuLeakDetected = $false
         DgpuActivityConfidence = 'None'
         DgpuConsumers = @()
+        LastGpuSampleSequence = 0L
+        LastGpuSampledAtUtcTicks = 0L
+        LastGpuSampleAgeSeconds = -1.0
+        BatteryHighDrainDetected = $false
+        BatteryHighDrainConfidence = 'None'
+        BatteryHighDrainDischargeW = 0.0
+        BatteryHighDrainProcesses = @()
+        BatteryHighDrainSampleCounts = @{}
+        BatteryHighDrainLastReason = 'inactive'
+        BatteryHighDrainLastSource = ''
+        LastBatteryHighDrainSampleAt = [DateTime]::MinValue
+        LastBatteryHighDrainAlertAt = [DateTime]::MinValue
+        BatteryHighDrainAlertCount = 0
+    }
+}
+
+function Reset-BatteryHighDrainState {
+    param([object]$AutomationState, [switch]$ResetSampler)
+    $AutomationState.BatteryHighDrainDetected = $false
+    $AutomationState.BatteryHighDrainConfidence = 'None'
+    $AutomationState.BatteryHighDrainDischargeW = 0.0
+    $AutomationState.BatteryHighDrainProcesses = @()
+    $AutomationState.BatteryHighDrainSampleCounts = @{}
+    $AutomationState.BatteryHighDrainLastReason = 'inactive'
+    $AutomationState.LastBatteryHighDrainSampleAt = [DateTime]::MinValue
+    if ($ResetSampler) {
+        try { [OpenSynapseNative.ProcessCpuSampler]::Reset() } catch { }
+    }
+}
+
+function Update-BatteryHighDrainState {
+    param(
+        [object]$Config,
+        [object]$Snapshot,
+        [object]$AutomationState,
+        [AllowNull()][object[]]$ProcessSamples = $null,
+        [DateTime]$Now = (Get-Date),
+        [switch]$ForceSample
+    )
+    $source = [string]$Snapshot.Source
+    $sourceChanged = -not [string]::Equals([string]$AutomationState.BatteryHighDrainLastSource, $source, [StringComparison]::OrdinalIgnoreCase)
+    $AutomationState.BatteryHighDrainLastSource = $source
+    if (-not [bool]$Config.BatteryHighDrainAlertsEnabled -or $source -ne 'Battery' -or [bool]$AutomationState.SessionLocked) {
+        if ($sourceChanged -or [bool]$AutomationState.BatteryHighDrainDetected -or
+            @($AutomationState.BatteryHighDrainSampleCounts.Keys).Count -gt 0 -or
+            [string]$AutomationState.BatteryHighDrainLastReason -ne 'inactive') {
+            Reset-BatteryHighDrainState $AutomationState -ResetSampler
+        }
+        return [pscustomobject]@{ Sampled = $false; ShouldNotify = $false; Detected = $false; Confidence = 'None'; DischargeW = 0.0; Processes = @(); Reason = 'inactive' }
+    }
+
+    if ($sourceChanged) { Reset-BatteryHighDrainState $AutomationState -ResetSampler }
+    if (-not $ForceSample -and [DateTime]$AutomationState.LastBatteryHighDrainSampleAt -ne [DateTime]::MinValue -and
+        ($Now - [DateTime]$AutomationState.LastBatteryHighDrainSampleAt).TotalSeconds -lt [int]$Config.BatteryHighDrainSampleSeconds) {
+        return [pscustomobject]@{
+            Sampled = $false
+            ShouldNotify = $false
+            Detected = [bool]$AutomationState.BatteryHighDrainDetected
+            Confidence = [string]$AutomationState.BatteryHighDrainConfidence
+            DischargeW = [double]$AutomationState.BatteryHighDrainDischargeW
+            Processes = [object[]]@($AutomationState.BatteryHighDrainProcesses)
+            Reason = [string]$AutomationState.BatteryHighDrainLastReason
+        }
+    }
+
+    if ($null -eq $ProcessSamples) {
+        try { $ProcessSamples = [object[]]@([OpenSynapseNative.ProcessCpuSampler]::Sample()) }
+        catch { $ProcessSamples = @() }
+    }
+    $AutomationState.LastBatteryHighDrainSampleAt = $Now
+    $ignored = [string[]]@($Config.BatteryHighDrainIgnoredProcesses | ForEach-Object {
+        ([string]$_).Trim()
+    } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    $current = @{}
+    foreach ($sample in @($ProcessSamples | Sort-Object -Property CpuPercentOneCore -Descending)) {
+        if ($null -eq $sample) { continue }
+        $name = ([string]$sample.ProcessName).Trim()
+        if ($name.EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase)) { $name = $name.Substring(0, $name.Length - 4) }
+        if ([string]::IsNullOrWhiteSpace($name) -or $name -in $ignored) { continue }
+        $cpu = [double]$sample.CpuPercentOneCore
+        if ($cpu -lt [double]$Config.BatteryHighDrainCpuPercent) { continue }
+        if ($current.ContainsKey($name)) {
+            $current[$name].CpuPercentOneCore = [Math]::Round([double]$current[$name].CpuPercentOneCore + $cpu, 1)
+            $current[$name].WorkingSetBytes = [long]$current[$name].WorkingSetBytes + [long]$sample.WorkingSetBytes
+            $current[$name].ProcessCount = [int]$current[$name].ProcessCount + [int]$sample.ProcessCount
+        }
+        else {
+            $current[$name] = [pscustomobject]@{
+                ProcessName = $name
+                CpuPercentOneCore = [Math]::Round($cpu, 1)
+                WorkingSetBytes = [long]$sample.WorkingSetBytes
+                ProcessCount = [Math]::Max(1, [int]$sample.ProcessCount)
+                ConsecutiveSamples = 0
+            }
+        }
+    }
+
+    $counts = $AutomationState.BatteryHighDrainSampleCounts
+    foreach ($oldName in @($counts.Keys)) {
+        if (-not $current.ContainsKey([string]$oldName)) { [void]$counts.Remove([string]$oldName) }
+    }
+    foreach ($name in @($current.Keys)) {
+        $counts[$name] = if ($counts.ContainsKey($name)) { [int]$counts[$name] + 1 } else { 1 }
+        $current[$name].ConsecutiveSamples = [int]$counts[$name]
+    }
+    $sustained = [object[]]@($current.Values |
+        Where-Object { [int]$_.ConsecutiveSamples -ge [int]$Config.BatteryHighDrainMinimumSamples } |
+        Sort-Object -Property CpuPercentOneCore -Descending |
+        Select-Object -First ([int]$Config.BatteryHighDrainMaximumProcesses))
+
+    $dischargeW = 0.0
+    $confidence = 'None'
+    foreach ($candidate in @(
+        [pscustomobject]@{ Name = 'BatteryDischargeAverage10mW'; Confidence = 'High' },
+        [pscustomobject]@{ Name = 'BatteryDischargeEmaW'; Confidence = 'Medium' },
+        [pscustomobject]@{ Name = 'BatteryDischargeW'; Confidence = 'Medium' }
+    )) {
+        $property = Get-ObjectProperty $Snapshot ([string]$candidate.Name)
+        if ($null -ne $property -and $null -ne $property.Value -and [double]$property.Value -gt 0) {
+            $dischargeW = [Math]::Round([double]$property.Value, 1)
+            $confidence = [string]$candidate.Confidence
+            break
+        }
+    }
+    $detected = $sustained.Count -gt 0 -and $dischargeW -ge [double]$Config.BatteryHighDrainMinimumDischargeW
+    $AutomationState.BatteryHighDrainDetected = $detected
+    $AutomationState.BatteryHighDrainConfidence = if ($detected) { $confidence } else { 'None' }
+    $AutomationState.BatteryHighDrainDischargeW = $dischargeW
+    $AutomationState.BatteryHighDrainProcesses = if ($detected) { $sustained } else { @() }
+    $AutomationState.BatteryHighDrainLastReason = if ($detected) {
+        "sustained process CPU with battery discharge above $($Config.BatteryHighDrainMinimumDischargeW) W"
+    }
+    elseif ($sustained.Count -gt 0) { 'sustained process CPU observed, but battery discharge is below the alert threshold or unavailable' }
+    else { 'sampling sustained process CPU' }
+
+    $cooldownElapsed = [DateTime]$AutomationState.LastBatteryHighDrainAlertAt -eq [DateTime]::MinValue -or
+        ($Now - [DateTime]$AutomationState.LastBatteryHighDrainAlertAt).TotalMinutes -ge [int]$Config.BatteryHighDrainCooldownMinutes
+    $shouldNotify = $detected -and $cooldownElapsed
+    if ($shouldNotify) {
+        $AutomationState.LastBatteryHighDrainAlertAt = $Now
+        $AutomationState.BatteryHighDrainAlertCount = [int]$AutomationState.BatteryHighDrainAlertCount + 1
+    }
+    return [pscustomobject]@{
+        Sampled = $true
+        ShouldNotify = $shouldNotify
+        Detected = $detected
+        Confidence = [string]$AutomationState.BatteryHighDrainConfidence
+        DischargeW = $dischargeW
+        Processes = [object[]]@($AutomationState.BatteryHighDrainProcesses)
+        Reason = [string]$AutomationState.BatteryHighDrainLastReason
     }
 }
 
@@ -1195,6 +1490,11 @@ function Get-SmartAutomationTelemetry {
     }
     $sessionLocked = [OpenSynapseNative.PowerChangeSignal]::SessionLocked -or
         $foreground -in @('LockApp', 'LogonUI')
+    $gpuSampledAtTicks = if ($null -ne $gpu -and $null -ne $gpu.PSObject.Properties['SampledAtUtcTicks']) { [long]$gpu.SampledAtUtcTicks } else { 0L }
+    $gpuSampleAgeSeconds = if ($gpuSampledAtTicks -gt 0) {
+        [Math]::Max(0.0, [Math]::Round(((Get-Date).ToUniversalTime().Ticks - $gpuSampledAtTicks) / [double][TimeSpan]::TicksPerSecond, 1))
+    }
+    else { -1.0 }
     return [pscustomobject]@{
         CpuPercent = if ($cpuPercent -lt 0) { -1.0 } else { [Math]::Round($cpuPercent, 1) }
         ForegroundProcess = $foreground
@@ -1206,6 +1506,9 @@ function Get-SmartAutomationTelemetry {
         DgpuPercent = if ($null -ne $gpu -and [bool]$gpu.Available) { [double]$gpu.DiscreteUtilizationPercent } else { -1.0 }
         DgpuDedicatedMb = if ($null -ne $gpu -and [bool]$gpu.Available) { [Math]::Round(([double]$gpu.DiscreteDedicatedBytes / 1MB), 1) } else { -1.0 }
         DgpuConsumers = $gpuConsumers
+        GpuSampleSequence = if ($null -ne $gpu -and $null -ne $gpu.PSObject.Properties['Sequence']) { [long]$gpu.Sequence } else { 0L }
+        GpuSampledAtUtcTicks = $gpuSampledAtTicks
+        GpuSampleAgeSeconds = $gpuSampleAgeSeconds
     }
 }
 
@@ -1287,9 +1590,11 @@ function Resolve-SmartAutomationDecision {
     $ignoredFullscreen = $ForegroundFullscreen -and (Test-IgnoredFullscreenProcess $Config $ForegroundProcess)
     $effectiveFullscreen = [bool]$Config.SmartFullscreenEnabled -and $ForegroundFullscreen -and
         -not $SessionLocked -and -not $ignoredFullscreen
+    $browserFullscreen = $effectiveFullscreen -and (Test-SmartProcessMatch $ForegroundProcess @($Config.SmartBrowserProcesses))
+    $fullscreenCpuFloor = if ($browserFullscreen) { [double]$Config.SmartBrowserFullscreenCpuFloor } else { [double]$Config.SmartFullscreenCpuFloor }
+    $fullscreenGpuFloor = if ($browserFullscreen) { [double]$Config.SmartBrowserFullscreenGpuFloor } else { [double]$Config.SmartFullscreenGpuFloor }
     $fullscreenCorroborated = $effectiveFullscreen -and
-        ($CpuPercent -ge [double]$Config.SmartFullscreenCpuFloor -or
-         $GpuPercent -ge [double]$Config.SmartFullscreenGpuFloor)
+        ($CpuPercent -ge $fullscreenCpuFloor -or $GpuPercent -ge $fullscreenGpuFloor)
     $rawProfile = 'Quiet'
     $reason = 'unverified power source uses Quiet fail-safe'
     $triggerKind = 'Safety'
@@ -1315,7 +1620,7 @@ function Resolve-SmartAutomationDecision {
         elseif ($fullscreenCorroborated) {
             $rawProfile = 'Hyper'
             $reason = "fullscreen workload: $ForegroundProcess at CPU $CpuPercent% / GPU $GpuPercent%"
-            $triggerKind = 'App'
+            $triggerKind = if ($browserFullscreen) { 'BrowserFullscreen' } else { 'App' }
         }
         elseif ($GpuPercent -ge [double]$Config.SmartGpuEnter) {
             $rawProfile = 'Hyper'
@@ -1353,7 +1658,7 @@ function Resolve-SmartAutomationDecision {
         elseif ($fullscreenCorroborated) {
             $rawProfile = 'Balance'
             $reason = "fullscreen workload on portable power: $ForegroundProcess at CPU $CpuPercent% / GPU $GpuPercent%"
-            $triggerKind = 'App'
+            $triggerKind = if ($browserFullscreen) { 'BrowserFullscreen' } else { 'App' }
         }
         elseif ($balanceApp -and $CpuPercent -ge [double]$Config.SmartAppCpuFloor) {
             $rawProfile = 'Balance'
@@ -1422,6 +1727,9 @@ function Resolve-SmartAutomationDecision {
             elseif ($triggerKind -eq 'App') {
                 [int]$Config.SmartAppEnterSamples
             }
+            elseif ($triggerKind -eq 'BrowserFullscreen') {
+                [int]$Config.SmartBrowserFullscreenSamples
+            }
             else {
                 [int]$Config.SmartLoadEnterSamples
             }
@@ -1464,10 +1772,22 @@ function Update-DgpuActivityState {
         [object]$Telemetry
     )
     $previousLeakDetected = [bool]$AutomationState.DgpuLeakDetected
+    $hasGpuSequence = $null -ne $Telemetry.PSObject.Properties['GpuSampleSequence']
+    $gpuSequence = if ($hasGpuSequence) { [long]$Telemetry.GpuSampleSequence } else { 0L }
+    $isNewGpuSample = -not $hasGpuSequence -or ($gpuSequence -gt 0 -and $gpuSequence -ne [long]$AutomationState.LastGpuSampleSequence)
     $leakSignal = [string]$Snapshot.SupplyType -in @('Battery', 'LowPowerPD') -and [bool]$Telemetry.GpuAvailable -and
         ([double]$Telemetry.DgpuPercent -ge [double]$Config.DgpuLeakUtilizationPercent -or [double]$Telemetry.DgpuDedicatedMb -ge [double]$Config.DgpuLeakMemoryMb)
-    if ($leakSignal) { $AutomationState.DgpuLeakSamples = [int]$AutomationState.DgpuLeakSamples + 1 }
-    else { $AutomationState.DgpuLeakSamples = 0 }
+    if ($isNewGpuSample) {
+        if ($leakSignal) { $AutomationState.DgpuLeakSamples = [int]$AutomationState.DgpuLeakSamples + 1 }
+        else { $AutomationState.DgpuLeakSamples = 0 }
+        if ($hasGpuSequence) { $AutomationState.LastGpuSampleSequence = $gpuSequence }
+        if ($null -ne $Telemetry.PSObject.Properties['GpuSampledAtUtcTicks']) {
+            $AutomationState.LastGpuSampledAtUtcTicks = [long]$Telemetry.GpuSampledAtUtcTicks
+        }
+        if ($null -ne $Telemetry.PSObject.Properties['GpuSampleAgeSeconds']) {
+            $AutomationState.LastGpuSampleAgeSeconds = [double]$Telemetry.GpuSampleAgeSeconds
+        }
+    }
     $AutomationState.DgpuLeakDetected = ([int]$AutomationState.DgpuLeakSamples -ge [int]$Config.DgpuLeakMinimumSamples)
     $smoothedDischarge = if ($null -ne $Snapshot.PSObject.Properties['BatteryDischargeAverage10mW'] -and
         $null -ne $Snapshot.BatteryDischargeAverage10mW) {
@@ -1917,15 +2237,21 @@ function Apply-ManagedBrightness {
 }
 
 function Resolve-RefreshPolicy {
-    param([object]$Config, [ValidateSet('Hyper', 'Balance', 'Quiet')][string]$ProfileName)
+    param(
+        [object]$Config,
+        [ValidateSet('Hyper', 'Balance', 'Quiet')][string]$ProfileName,
+        [AllowNull()][object]$Snapshot = $null
+    )
+    if ($ProfileName -eq 'Quiet' -and [string]$Config.Selection -eq 'Quiet') {
+        return 'Fixed60'
+    }
     if (-not [bool]$Config.ManageRefreshRate -or [string]$Config.RefreshPolicy -eq 'Unmanaged') { return 'Unmanaged' }
     $policy = [string]$Config.RefreshPolicy
-    if ($policy -ne 'FollowProfile') { return $policy }
-    switch ($ProfileName) {
-        'Hyper' { return 'Maximum' }
-        'Balance' { return 'Fixed120' }
-        default { return 'Fixed60' }
+    if ($policy -eq 'Auto') {
+        if ($null -ne $Snapshot -and [string]$Snapshot.SupplyType -eq 'HighPowerAC') { return 'Fixed240' }
+        return 'DynamicNative'
     }
+    return $policy
 }
 
 function Apply-DisplayPolicy {
@@ -1935,24 +2261,37 @@ function Apply-DisplayPolicy {
         [object]$State,
         [switch]$Full,
         [switch]$ApplyVisualPolicy,
+        [switch]$ApplyRefreshPolicy,
         [switch]$RepairScaling,
         [AllowNull()][object]$Snapshot
     )
     $refreshWarning = ''
+    $refreshPolicy = ''
     try {
-        if ($ApplyVisualPolicy) {
-            $refreshPolicy = Resolve-RefreshPolicy $Config $Name
+        if ($ApplyVisualPolicy -or $ApplyRefreshPolicy) {
+            $refreshPolicy = Resolve-RefreshPolicy $Config $Name $Snapshot
             if ($refreshPolicy -ne 'Unmanaged') {
+                Write-AppLog "$Name refresh policy=$refreshPolicy applying."
                 if ($refreshPolicy -eq 'DynamicNative') {
-                    $count = [OpenSynapseNative.DynamicRefreshManager]::EnableNativeDynamic()
+                    $dynamicStatus = [OpenSynapseNative.DynamicRefreshManager]::GetStatus()
+                    if ([bool]$dynamicStatus.InternalDisplayActive) {
+                        $count = [OpenSynapseNative.DynamicRefreshManager]::EnableNativeDynamic()
+                    }
+                    else {
+                        $count = [OpenSynapseNative.DynamicRefreshManager]::ApplyExternalMaximumRefresh()
+                        if (((Get-Date) - $script:LastDynamicRefreshDeferredLog).TotalMinutes -ge 30) {
+                            Write-AppLog 'Dynamic refresh deferred because the internal panel is inactive; active external displays remain at maximum refresh.'
+                            $script:LastDynamicRefreshDeferredLog = Get-Date
+                        }
+                    }
                 }
                 else {
                     $null = [OpenSynapseNative.DynamicRefreshManager]::Disable()
                     $count = switch ($refreshPolicy) {
                         'Maximum' { [OpenSynapseNative.DisplayModeManager]::ApplyMaximumRefresh(); break }
-                        'Fixed60' { [OpenSynapseNative.DisplayModeManager]::ApplyFixedRefresh(60); break }
-                        'Fixed120' { [OpenSynapseNative.DisplayModeManager]::ApplyFixedRefresh(120); break }
-                        'Fixed240' { [OpenSynapseNative.DisplayModeManager]::ApplyFixedRefresh(240); break }
+                        'Fixed60' { [OpenSynapseNative.DynamicRefreshManager]::ApplyProfileRefresh(60); break }
+                        'Fixed120' { [OpenSynapseNative.DynamicRefreshManager]::ApplyProfileRefresh(120); break }
+                        'Fixed240' { [OpenSynapseNative.DynamicRefreshManager]::ApplyProfileRefresh(240); break }
                         default { 0 }
                     }
                 }
@@ -1961,12 +2300,31 @@ function Apply-DisplayPolicy {
         }
     }
     catch {
-        $refreshWarning = $_.Exception.Message
-        Write-AppLog "Refresh policy failed: $refreshWarning"
+        $dynamicFailure = $_.Exception.Message
+        if ($refreshPolicy -eq 'DynamicNative') {
+            try {
+                $null = [OpenSynapseNative.DynamicRefreshManager]::Disable()
+                try { $null = [OpenSynapseNative.DynamicRefreshManager]::ApplyExternalMaximumRefresh() }
+                catch { Write-AppLog "External maximum refresh was preserved on a best-effort basis during Eco fallback: $($_.Exception.Message)" }
+                $fallbackCount = [OpenSynapseNative.DynamicRefreshManager]::ApplyInternalFixedRefresh(60)
+                $refreshWarning = "$dynamicFailure Auto dynamic refresh failed; the internal display fell back to Eco 60 Hz."
+                Write-AppLog "Dynamic refresh failed and safely fell back to Eco 60 Hz; changed=$fallbackCount; error=$dynamicFailure"
+            }
+            catch {
+                $refreshWarning = "$dynamicFailure Eco 60 Hz fallback also failed: $($_.Exception.Message)"
+                Write-AppLog "Refresh policy and Eco 60 Hz fallback failed: $refreshWarning"
+            }
+        }
+        else {
+            $refreshWarning = $dynamicFailure
+            Write-AppLog "Refresh policy failed: $refreshWarning"
+        }
     }
 
     try {
-        if ($ApplyVisualPolicy -and [bool]$Config.ManageAdvancedColor) {
+        $manualEco = $Name -eq 'Quiet' -and [string]$Config.Selection -eq 'Quiet'
+        $advancedColorNeedsRestore = @($State.AdvancedColorStates).Count -gt 0
+        if ($ApplyVisualPolicy -and ([bool]$Config.ManageAdvancedColor -or $manualEco -or $advancedColorNeedsRestore)) {
             if ($Name -in @('Balance', 'Quiet')) {
                 if (@($State.AdvancedColorStates).Count -eq 0) {
                     $captured = @()
@@ -2057,11 +2415,19 @@ function Write-TelemetryRecord {
         if ((Test-Path -LiteralPath $script:TelemetryPath) -and (Get-Item -LiteralPath $script:TelemetryPath).Length -gt 2097152) {
             Move-Item -LiteralPath $script:TelemetryPath -Destination ($script:TelemetryPath + '.old') -Force
         }
+        $configVariable = Get-Variable -Name Config -Scope Script -ErrorAction SilentlyContinue
+        $telemetryRefreshPolicy = if ($null -ne $configVariable) { [string]$configVariable.Value.RefreshPolicy } else { '' }
+        $timerVariable = Get-Variable -Name Timer -Scope Script -ErrorAction SilentlyContinue
         $record = [pscustomobject][ordered]@{
             SchemaVersion = $script:TelemetrySchemaVersion
+            OpenSynapseVersion = $script:AppVersion
+            SupplyClassifierVersion = $script:SupplyClassifierVersion
             Timestamp = (Get-Date).ToUniversalTime().ToString('o')
             Source = [string]$Snapshot.Source
             SupplyType = [string]$Snapshot.SupplyType
+            RawSupplyType = [string]$Snapshot.RawSupplyType
+            SupplyConfirmationPending = [bool]$Snapshot.SupplyConfirmationPending
+            AdapterLimitW = $Snapshot.AdapterLimitW
             BatteryPercent = [int]$Snapshot.BatteryPercent
             BatteryRemainingMwh = $Snapshot.BatteryRemainingMwh
             BatteryVoltageMv = $Snapshot.BatteryVoltageMv
@@ -2077,6 +2443,14 @@ function Write-TelemetryRecord {
             ActiveProfile = if ([string]::IsNullOrWhiteSpace($ActiveProfile)) { $DesiredProfile } else { $ActiveProfile }
             CpuPercent = [double]$AutomationState.LastCpuPercent
             GpuPercent = [double]$AutomationState.LastGpuPercent
+            GpuSampleSequence = [long]$AutomationState.LastGpuSampleSequence
+            GpuSampledAtUtc = if ([long]$AutomationState.LastGpuSampledAtUtcTicks -gt 0) {
+                [DateTime]::new([long]$AutomationState.LastGpuSampledAtUtcTicks, [DateTimeKind]::Utc).ToString('o')
+            } else { '' }
+            GpuSampleAgeSeconds = [double]$AutomationState.LastGpuSampleAgeSeconds
+            GpuTelemetryIntervalSeconds = [Math]::Round([int]$script:LastGpuTelemetryIntervalMs / 1000.0, 1)
+            MonitorIntervalSeconds = if ($null -ne $timerVariable -and $null -ne $timerVariable.Value) { [Math]::Round([int]$timerVariable.Value.Interval / 1000.0, 1) } else { 0 }
+            RefreshPolicy = $telemetryRefreshPolicy
             ForegroundProcess = [string]$AutomationState.ForegroundProcess
             ForegroundFullscreen = [bool]$AutomationState.ForegroundFullscreen
             SessionLocked = [bool]$AutomationState.SessionLocked
@@ -2084,6 +2458,13 @@ function Write-TelemetryRecord {
             DgpuActivitySuspected = [bool]$AutomationState.DgpuLeakDetected
             DgpuActivityConfidence = [string]$AutomationState.DgpuActivityConfidence
             DgpuConsumers = [string[]]@($AutomationState.DgpuConsumers | ForEach-Object { [string]$_.ProcessName } | Select-Object -Unique)
+            BatteryHighDrainDetected = [bool]$AutomationState.BatteryHighDrainDetected
+            BatteryHighDrainConfidence = [string]$AutomationState.BatteryHighDrainConfidence
+            BatteryHighDrainDischargeW = [double]$AutomationState.BatteryHighDrainDischargeW
+            BatteryHighDrainProcesses = [string[]]@($AutomationState.BatteryHighDrainProcesses | ForEach-Object {
+                "$($_.ProcessName):$($_.CpuPercentOneCore)%"
+            })
+            BatteryHighDrainAlertCount = [int]$AutomationState.BatteryHighDrainAlertCount
             Reason = [string]$AutomationState.LastReason
         }
         $line = ($record | ConvertTo-Json -Compress -Depth 5) + [Environment]::NewLine
@@ -2165,6 +2546,7 @@ function Set-ActiveProfile {
         [object]$Config,
         [switch]$Full,
         [switch]$ApplyVisualPolicy,
+        [switch]$ApplyRefreshPolicy,
         [switch]$RepairScaling,
         [AllowNull()][object]$Snapshot
     )
@@ -2193,7 +2575,7 @@ function Set-ActiveProfile {
         Restore-QuietServices $State
     }
 
-    $displayResult = Apply-DisplayPolicy $Name $Config $State -Full:$Full -ApplyVisualPolicy:$ApplyVisualPolicy -RepairScaling:$RepairScaling -Snapshot $Snapshot
+    $displayResult = Apply-DisplayPolicy $Name $Config $State -Full:$Full -ApplyVisualPolicy:$ApplyVisualPolicy -ApplyRefreshPolicy:$ApplyRefreshPolicy -RepairScaling:$RepairScaling -Snapshot $Snapshot
     $verified = [string]::Equals((Get-ActivePlanGuid), $targetGuid, [StringComparison]::OrdinalIgnoreCase)
     if (-not $verified) { throw "$Name plan verification failed." }
     return [pscustomobject]@{
@@ -2710,11 +3092,30 @@ function Install-OpenSynapse {
     if (-not (Test-Path -LiteralPath $script:ShortcutPath)) { throw 'Start menu shortcut verification failed.' }
     Start-ScheduledTask -TaskName $script:TaskName
     $runtimeReady = $false
+    $runtimeFailure = ''
     foreach ($attempt in 1..240) {
-        if (Test-Path -LiteralPath $script:RuntimePath) { $runtimeReady = $true; break }
+        if (Test-Path -LiteralPath $script:RuntimePath) {
+            $runtimeRecord = Read-JsonFile $script:RuntimePath
+            if ($null -ne $runtimeRecord) {
+                $runtimeProcess = Get-Process -Id ([int]$runtimeRecord.ProcessId) -ErrorAction SilentlyContinue
+                if ($null -eq $runtimeProcess -or $runtimeProcess.StartTime.ToUniversalTime().Ticks -ne [long]$runtimeRecord.StartTimeUtcTicks) {
+                    $runtimeFailure = 'The tray process exited before reporting healthy.'
+                    break
+                }
+                $healthy = $runtimeRecord.PSObject.Properties['Health'] -and [string]$runtimeRecord.Health -eq 'Healthy'
+                $successfulTick = $runtimeRecord.PSObject.Properties['LastSuccessfulTickUtc'] -and
+                    -not [string]::IsNullOrWhiteSpace([string]$runtimeRecord.LastSuccessfulTickUtc)
+                if ($healthy -and $successfulTick) { $runtimeReady = $true; break }
+            }
+        }
         Start-Sleep -Milliseconds 250
     }
-    if (-not $runtimeReady) { throw 'The scheduled task was registered, but the tray process did not report ready within 60 seconds. Check OpenSynapse.log.' }
+    if (-not $runtimeReady) {
+        if ([string]::IsNullOrWhiteSpace($runtimeFailure)) {
+            $runtimeFailure = 'The tray process did not reach Healthy with a successful monitor tick within 60 seconds.'
+        }
+        throw "The scheduled task was registered, but startup validation failed: $runtimeFailure Check OpenSynapse.log."
+    }
     $runtimeRecord = Read-JsonFile $script:RuntimePath
     if ($null -eq $runtimeRecord) { throw 'The tray runtime record is invalid.' }
     $runtimeProcess = Get-Process -Id ([int]$runtimeRecord.ProcessId) -ErrorAction SilentlyContinue
@@ -2856,6 +3257,9 @@ function Test-OpenSynapse {
     $unknownPower = [pscustomobject]@{ Source = 'AC'; SupplyType = 'UnknownAC'; BatteryPercent = 76; AdapterLimitW = $null }
     if ((Resolve-SupplyType AC 160) -ne 'HighPowerAC') { throw 'High-power adapter classification failed.' }
     if ((Resolve-SupplyType AC 70) -ne 'LowPowerPD') { throw 'PD adapter classification failed.' }
+    if ((Resolve-SupplyType AC 85) -ne 'LowPowerPD' -or (Resolve-SupplyType AC 91.86) -ne 'UnknownAC') {
+        throw 'PD evidence threshold classification failed.'
+    }
     if ((Resolve-SupplyType AC $null) -ne 'UnknownAC') { throw 'Unknown AC classification failed.' }
     if ((Get-DesiredProfile Auto $highPower) -ne 'Hyper') { throw 'Auto high-power mapping failed.' }
     if ((Get-DesiredProfile Auto $pdPower) -ne 'Quiet') { throw 'Auto PD mapping failed.' }
@@ -2873,9 +3277,9 @@ function Test-OpenSynapse {
     if (@($defaults.QuietProcessNames | Where-Object { $_ -match '^(FlClash|FlClashCore|Snipaste)$' }).Count -ne 0) {
         throw 'Third-party startup apps must not be included in Quiet process maintenance.'
     }
-    if ((Resolve-RefreshPolicy $defaults Hyper) -ne 'Maximum' -or
-        (Resolve-RefreshPolicy $defaults Balance) -ne 'Fixed120' -or
-        (Resolve-RefreshPolicy $defaults Quiet) -ne 'Fixed60') {
+    if ((Resolve-RefreshPolicy $defaults Hyper $highPower) -ne 'Fixed240' -or
+        (Resolve-RefreshPolicy $defaults Balance $pdPower) -ne 'DynamicNative' -or
+        (Resolve-RefreshPolicy $defaults Quiet $batteryPower) -ne 'DynamicNative') {
         throw 'Default refresh policy mapping failed.'
     }
     if ($defaults.ProcessMaintenanceSeconds -ne 180 -or -not [bool]$defaults.AdaptiveQuietBrightness -or
@@ -2975,6 +3379,11 @@ function Get-DisplayStatusText {
             $consumerNames = [string[]]@($automationStatus.DgpuConsumers | ForEach-Object { [string]$_.ProcessName } | Select-Object -Unique)
             $activityStatus = if ([bool]$automationStatus.DgpuLeakDetected) { "SUSPECTED ($($automationStatus.DgpuActivityConfidence) confidence)" } else { "observing ($($automationStatus.DgpuLeakSamples)/$($Config.DgpuLeakMinimumSamples))" }
             $lines.Add("dGPU activity: $activityStatus; consumers=$(if ($consumerNames.Count) { $consumerNames -join ', ' } else { 'none' })")
+            $highDrainNames = [string[]]@($automationStatus.BatteryHighDrainProcesses | ForEach-Object { "$($_.ProcessName) $($_.CpuPercentOneCore)%" })
+            $highDrainStatus = if ([bool]$automationStatus.BatteryHighDrainDetected) {
+                "DETECTED ($($automationStatus.BatteryHighDrainConfidence) confidence, $($automationStatus.BatteryHighDrainDischargeW) W)"
+            } else { [string]$automationStatus.BatteryHighDrainLastReason }
+            $lines.Add("Battery high-drain processes: $highDrainStatus; candidates=$(if ($highDrainNames.Count) { $highDrainNames -join ', ' } else { 'none' }); alerts=$($automationStatus.BatteryHighDrainAlertCount)")
         }
         $powerSnapshot = Get-PowerSnapshot -UseCachedAdapter
         if ([bool]$powerSnapshot.BatteryTelemetryAvailable) {
@@ -3007,7 +3416,8 @@ function Get-DisplayStatusText {
             $lastSuccess = if ($null -ne $lastSuccessVariable -and [DateTime]$lastSuccessVariable.Value -ne [DateTime]::MinValue) {
                 ([DateTime]$lastSuccessVariable.Value).ToString('HH:mm:ss')
             } else { 'waiting' }
-            $lines.Add("Runtime health: $($healthVariable.Value), failures=$failureCount, last successful tick=$lastSuccess")
+            $monitorInterval = if ($null -ne (Get-Variable -Name Timer -Scope Script -ErrorAction SilentlyContinue) -and $null -ne $script:Timer) { "$($script:Timer.Interval / 1000)s" } else { 'not running' }
+            $lines.Add("Runtime health: $($healthVariable.Value), failures=$failureCount, last successful tick=$lastSuccess, monitor interval=$monitorInterval")
         }
         $brightness = Get-InternalBrightness
         if ($null -ne $brightness) { $lines.Add("Internal brightness: $brightness%") }
@@ -3145,10 +3555,14 @@ function Start-TrayApplication {
     $script:LastAppliedHyperCpuPolicy = $null
     $script:QuietProcessGuard = @{}
     $script:ApplyInProgress = $false
+    $script:SuppressOptionSave = $false
     $script:LastApplyErrorNotification = [DateTime]::MinValue
     $script:MonitorTickRunning = $false
     $script:MonitorBaseIntervalMs = 5000
+    $script:MonitorBatteryActiveIntervalMs = 10000
+    $script:MonitorBatteryIdleIntervalMs = 15000
     $script:MonitorMaximumIntervalMs = 60000
+    $script:LastMonitorSnapshot = $null
     $script:ConsecutiveMonitorFailures = 0
     $script:RuntimeHealth = 'Starting'
     $script:LastRuntimeError = ''
@@ -3158,6 +3572,7 @@ function Start-TrayApplication {
     $script:LastExternalForegroundProcess = ''
     $script:TemporaryOverride = $null
     $initialAutomationProfile = if ($captureUi) { 'Balance' } else { Get-ActiveProfileName $script:State }
+    $script:LastVerifiedActiveProfile = $initialAutomationProfile
     $script:AutomationState = New-SmartAutomationState $initialAutomationProfile
 
     $runtime = [pscustomobject]@{
@@ -3179,7 +3594,7 @@ function Start-TrayApplication {
     [OpenSynapseNative.PowerChangeSignal]::Start()
     $script:LastPowerEventVersion = [OpenSynapseNative.PowerChangeSignal]::Version
     $script:LastPowerEventCount = [OpenSynapseNative.PowerChangeSignal]::EventCount
-    [OpenSynapseNative.GpuTelemetry]::Start(5000)
+    [OpenSynapseNative.GpuTelemetry]::Start(10000)
 
     $trayIconPath = if (Test-Path -LiteralPath $script:SourceTrayIcon) { $script:SourceTrayIcon } else { $script:InstalledTrayIcon }
     $appIconPath = if (Test-Path -LiteralPath $script:SourceAppIcon) { $script:SourceAppIcon } else { $script:InstalledAppIcon }
@@ -3202,11 +3617,11 @@ function Start-TrayApplication {
     $script:AutoMenu = $menu.Items.Add('Smart Auto: supply + app + CPU/GPU load')
     $script:HyperMenu = $menu.Items.Add('Lock Hyper (manual override)')
     $script:BalanceMenu = $menu.Items.Add('Lock Balance (battery >= 50%)')
-    $script:QuietMenu = $menu.Items.Add('Lock Quiet')
+    $script:QuietMenu = $menu.Items.Add('Lock Eco')
     $script:TemporaryMenu = $menu.Items.Add('Temporary mode')
     $script:TemporaryHyperMenu = $script:TemporaryMenu.DropDownItems.Add('Hyper for 30 minutes')
     $script:TemporaryBalanceMenu = $script:TemporaryMenu.DropDownItems.Add('Balance for 30 minutes')
-    $script:TemporaryQuietMenu = $script:TemporaryMenu.DropDownItems.Add('Quiet for 30 minutes')
+    $script:TemporaryQuietMenu = $script:TemporaryMenu.DropDownItems.Add('Eco for 30 minutes')
     $script:TemporaryCancelMenu = $script:TemporaryMenu.DropDownItems.Add('Cancel temporary mode')
     [void]$menu.Items.Add('-')
     $openMenu = $menu.Items.Add('Open control panel')
@@ -3419,10 +3834,10 @@ function Start-TrayApplication {
     # Dashboard
     New-PageHeading $pageDashboard 'OPENSYNAPSE' 'Razer Blade 16 power and display policy controller'
     $script:PowerLabel = New-Object Windows.Forms.Label
-    $script:PowerLabel.Font = New-Object Drawing.Font('Segoe UI', 11, [Drawing.FontStyle]::Bold)
+    $script:PowerLabel.Font = New-Object Drawing.Font('Segoe UI', 10, [Drawing.FontStyle]::Bold)
     $script:PowerLabel.AutoEllipsis = $true
     $script:PowerLabel.Location = New-Object Drawing.Point(42, 122)
-    $script:PowerLabel.Size = New-Object Drawing.Size(930, 32)
+    $script:PowerLabel.Size = New-Object Drawing.Size(980, 32)
     $script:PowerLabel.ForeColor = $script:RazerGreen
     $pageDashboard.Controls.Add($script:PowerLabel)
 
@@ -3459,7 +3874,7 @@ function Start-TrayApplication {
     $pageDashboard.Controls.Add($balanceButton)
 
     $quietButton = New-Object Windows.Forms.Button
-    $quietButton.Text = 'Quiet'
+    $quietButton.Text = 'Eco'
     $quietButton.Size = New-Object Drawing.Size(222, 44)
     $quietButton.Location = New-Object Drawing.Point(742, 196)
     $quietButton.Font = New-Object Drawing.Font('Segoe UI', 9, [Drawing.FontStyle]::Bold)
@@ -3486,7 +3901,7 @@ function Start-TrayApplication {
     $script:PolicyHintLabel.ForeColor = $script:TextMuted
     $automationPanel.Controls.Add($script:PolicyHintLabel)
     $automationRule = New-Object Windows.Forms.Label
-    $automationRule.Text = "POWER INPUT`r`n280W-class AC -> Hyper`r`nUSB-C PD / battery -> Quiet or eligible Balance"
+    $automationRule.Text = "POWER INPUT`r`n280W-class AC -> Hyper`r`nUSB-C PD / battery -> Eco or eligible Balance"
     $automationRule.Location = New-Object Drawing.Point(20, 150)
     $automationRule.Size = New-Object Drawing.Size(410, 110)
     $automationRule.ForeColor = $script:TextLight
@@ -3614,7 +4029,7 @@ function Start-TrayApplication {
     $pageGame.Controls.Add($gameBoundary)
 
     # Settings
-    New-PageHeading $pageSettings 'SETTINGS' 'Quiet efficiency, display behavior and vendor control shortcuts'
+    New-PageHeading $pageSettings 'SETTINGS' 'Eco efficiency, display behavior and vendor control shortcuts'
     $optionsGroup = New-Object Windows.Forms.GroupBox
     $optionsGroup.Text = 'Power and display automation'
     $optionsGroup.Location = New-Object Drawing.Point(32, 126)
@@ -3637,11 +4052,13 @@ function Start-TrayApplication {
         return $control
     }
 
-    $script:CloseAppsCheck = New-OptionCheck 'Quiet: close high-drain helper apps' 20 28 ([bool]$script:Config.CloseHighDrainAppsInQuiet)
-    $script:ServicesCheck = New-OptionCheck 'Quiet: pause Armoury Crate services' 20 64 ([bool]$script:Config.ManageAsusServices)
-    $script:WakeCheck = New-OptionCheck 'Quiet: disable selected wake devices' 20 100 ([bool]$script:Config.ManageWakeDevices)
+    $script:CloseAppsCheck = New-OptionCheck 'Eco: close high-drain helper apps' 20 28 ([bool]$script:Config.CloseHighDrainAppsInQuiet)
+    $script:ServicesCheck = New-OptionCheck 'Eco: pause Armoury Crate services' 20 64 ([bool]$script:Config.ManageAsusServices)
+    $script:WakeCheck = New-OptionCheck 'Eco: disable selected wake devices' 20 100 ([bool]$script:Config.ManageWakeDevices)
     $script:ColorCheck = New-OptionCheck 'HDR by profile (applied only with display button)' 575 28 ([bool]$script:Config.ManageAdvancedColor)
-    $script:BrightnessCheck = New-OptionCheck 'Manage brightness (Quiet adapts on battery)' 575 64 ([bool]$script:Config.ManageBrightness)
+    $script:BrightnessCheck = New-OptionCheck 'Manage brightness (Eco adapts on battery)' 575 64 ([bool]$script:Config.ManageBrightness)
+    $script:BatteryHighDrainCheck = New-OptionCheck 'Battery: notify sustained high-CPU processes (never closes them)' 575 136 ([bool]$script:Config.BatteryHighDrainAlertsEnabled)
+    $script:BatteryHighDrainCheck.Size = New-Object Drawing.Size(690, 30)
     $scaleLabel = New-Object Windows.Forms.Label
     $scaleLabel.Text = 'Scaling: internal'
     $scaleLabel.AutoSize = $true
@@ -3681,20 +4098,20 @@ function Start-TrayApplication {
     $script:ScalingCheck = New-OptionCheck 'Repair scaling after display changes' 575 100 ([bool]$script:Config.DisplayScalingEnabled)
 
     $quietPolicyLabel = New-Object Windows.Forms.Label
-    $quietPolicyLabel.Text = 'Quiet CPU policy'
+    $quietPolicyLabel.Text = 'Eco CPU policy'
     $quietPolicyLabel.AutoSize = $true
     $quietPolicyLabel.Location = New-Object Drawing.Point(20, 146)
     $quietPolicyLabel.ForeColor = $script:TextMuted
     $optionsGroup.Controls.Add($quietPolicyLabel)
     $quietPolicyValue = New-Object Windows.Forms.Label
-    $quietPolicyValue.Text = 'Dynamic 65 / 60 / 50%; EPP 90 / 95 / 100; Boost off'
+    $quietPolicyValue.Text = '65 / 60 / 50%; EPP 90 / 95 / 100; Boost off'
     $quietPolicyValue.Location = New-Object Drawing.Point(175, 146)
-    $quietPolicyValue.Size = New-Object Drawing.Size(375, 30)
+    $quietPolicyValue.Size = New-Object Drawing.Size(390, 30)
     $quietPolicyValue.ForeColor = $script:TextLight
     $optionsGroup.Controls.Add($quietPolicyValue)
 
     $brightnessLabel = New-Object Windows.Forms.Label
-    $brightnessLabel.Text = 'Quiet ceiling'
+    $brightnessLabel.Text = 'Eco ceiling'
     $brightnessLabel.AutoSize = $true
     $brightnessLabel.Location = New-Object Drawing.Point(575, 191)
     $brightnessLabel.ForeColor = $script:TextMuted
@@ -3733,15 +4150,13 @@ function Start-TrayApplication {
     $refreshLabel.Location = New-Object Drawing.Point(20, 255)
     $refreshLabel.ForeColor = $script:TextMuted
     $optionsGroup.Controls.Add($refreshLabel)
-    $script:RefreshPolicyValues = @('FollowProfile', 'Fixed60', 'Fixed120', 'Fixed240', 'DynamicNative', 'Unmanaged')
+    $script:RefreshPolicyValues = @('Auto', 'Fixed60', 'Fixed240', 'Unmanaged')
     $script:RefreshPolicyBox = New-Object Windows.Forms.ComboBox
     $script:RefreshPolicyBox.DropDownStyle = 'DropDownList'
     [void]$script:RefreshPolicyBox.Items.AddRange(@(
-        'Follow profile when Apply display is clicked',
-        'Fixed 60 Hz',
-        'Fixed 120 Hz',
-        'Fixed 240 Hz',
-        'Native dynamic 60-240 Hz (internal; external fixed 120)',
+        'Auto: battery / PD dynamic 60-240 Hz; verified 280W fixed 240 Hz',
+        'Eco: internal fixed 60 Hz (returns to Auto when power is connected)',
+        'Internal fixed 240 Hz (returns to Auto when power is connected)',
         'Do not manage refresh rate'
     ))
     $policyIndex = [Array]::IndexOf([object[]]$script:RefreshPolicyValues, [string]$script:Config.RefreshPolicy)
@@ -3759,7 +4174,7 @@ function Start-TrayApplication {
     $applyDisplayButton = New-Object Windows.Forms.Button
     $applyDisplayButton.Text = 'Apply display now (may blink)'
     $applyDisplayButton.Location = New-Object Drawing.Point(830, 247)
-    $applyDisplayButton.Size = New-Object Drawing.Size(250, 38)
+    $applyDisplayButton.Size = New-Object Drawing.Size(360, 38)
     $applyDisplayButton.Anchor = 'Top, Right'
     Set-RazerButtonStyle $applyDisplayButton $false
     $optionsGroup.Controls.Add($applyDisplayButton)
@@ -4006,7 +4421,7 @@ function Start-TrayApplication {
         $dialog.Font = $script:Form.Font
         $profileBox = New-Object Windows.Forms.ComboBox
         $profileBox.DropDownStyle = 'DropDownList'
-        [void]$profileBox.Items.AddRange(@('Hyper', 'Balance', 'Quiet'))
+        [void]$profileBox.Items.AddRange(@('Hyper', 'Balance', 'Eco'))
         $profileBox.SelectedIndex = 2
         $profileBox.Location = New-Object Drawing.Point(28, 46)
         $profileBox.Size = New-Object Drawing.Size(200, 30)
@@ -4039,7 +4454,8 @@ function Start-TrayApplication {
             $minutes = @(30, 60, 120, 30)[$durationBox.SelectedIndex]
             $dialog.DialogResult = [Windows.Forms.DialogResult]::OK
             $dialog.Close()
-            Set-TemporaryProfile ([string]$profileBox.SelectedItem) $minutes $endOnPower
+            $selectedProfile = if ([string]$profileBox.SelectedItem -eq 'Eco') { 'Quiet' } else { [string]$profileBox.SelectedItem }
+            Set-TemporaryProfile $selectedProfile $minutes $endOnPower
         })
         $cancelButton.Add_Click({ Clear-TemporaryOverride; $dialog.Close(); Apply-CurrentSelection -Full -Notify })
         $null = $dialog.ShowDialog($script:Form)
@@ -4080,12 +4496,15 @@ function Start-TrayApplication {
         $processColumn.Name = 'ProcessName'; $processColumn.HeaderText = 'Process (without .exe)'; $processColumn.FillWeight = 48
         $profileColumn = New-Object Windows.Forms.DataGridViewComboBoxColumn
         $profileColumn.Name = 'Profile'; $profileColumn.HeaderText = 'Profile'; $profileColumn.FillWeight = 24
-        [void]$profileColumn.Items.AddRange(@('Hyper', 'Balance', 'Quiet'))
+        [void]$profileColumn.Items.AddRange(@('Hyper', 'Balance', 'Eco'))
         $scopeColumn = New-Object Windows.Forms.DataGridViewComboBoxColumn
         $scopeColumn.Name = 'Scope'; $scopeColumn.HeaderText = 'Trigger'; $scopeColumn.FillWeight = 32
         [void]$scopeColumn.Items.AddRange(@('Foreground', 'Fullscreen', 'Running'))
         foreach ($column in @($enabledColumn, $processColumn, $profileColumn, $scopeColumn)) { [void]$grid.Columns.Add($column) }
-        foreach ($rule in @($script:Config.ApplicationRules)) { [void]$grid.Rows.Add([bool]$rule.Enabled, [string]$rule.ProcessName, [string]$rule.Profile, [string]$rule.Scope) }
+        foreach ($rule in @($script:Config.ApplicationRules)) {
+            $profileDisplayName = if ([string]$rule.Profile -eq 'Quiet') { 'Eco' } else { [string]$rule.Profile }
+            [void]$grid.Rows.Add([bool]$rule.Enabled, [string]$rule.ProcessName, $profileDisplayName, [string]$rule.Scope)
+        }
         $addCurrentButton = New-Object Windows.Forms.Button
         $addCurrentButton.Text = 'Add last active app'
         $addCurrentButton.Location = New-Object Drawing.Point(24, 493)
@@ -4121,7 +4540,8 @@ function Start-TrayApplication {
                 if ($row.IsNewRow) { continue }
                 $processName = ([string]$row.Cells['ProcessName'].Value).Trim()
                 if ($processName.EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase)) { $processName = $processName.Substring(0, $processName.Length - 4) }
-                $profileName = [string]$row.Cells['Profile'].Value
+                $profileDisplayName = [string]$row.Cells['Profile'].Value
+                $profileName = if ($profileDisplayName -eq 'Eco') { 'Quiet' } else { $profileDisplayName }
                 $scopeName = [string]$row.Cells['Scope'].Value
                 if ([string]::IsNullOrWhiteSpace($processName) -or $profileName -notin @('Hyper', 'Balance', 'Quiet') -or $scopeName -notin @('Foreground', 'Fullscreen', 'Running')) {
                     [Windows.Forms.MessageBox]::Show('Every rule needs a process name, profile and trigger.', 'OpenSynapse rules', 'OK', 'Warning') | Out-Null
@@ -4140,25 +4560,54 @@ function Start-TrayApplication {
     }
 
     function Update-ApplicationUi {
-        $snapshot = Get-PowerSnapshot -UseCachedAdapter
-        $temporaryProfile = Get-TemporaryProfile $snapshot
-        $desired = Get-DesiredProfile ([string]$script:Config.Selection) $snapshot $script:Config $script:AutomationState $temporaryProfile
+        param(
+            [AllowNull()][object]$Snapshot = $null,
+            [string]$Desired = '',
+            [string]$TemporaryProfile = '',
+            [string]$ActiveName = ''
+        )
+        $snapshot = if ($null -eq $Snapshot) { Get-PowerSnapshot -UseCachedAdapter } else { $Snapshot }
+        $temporaryProfile = if ([string]::IsNullOrWhiteSpace($TemporaryProfile)) { Get-TemporaryProfile $snapshot } else { $TemporaryProfile }
+        $desired = if ([string]::IsNullOrWhiteSpace($Desired)) {
+            Get-DesiredProfile ([string]$script:Config.Selection) $snapshot $script:Config $script:AutomationState $temporaryProfile
+        }
+        else { $Desired }
         $batteryText = if ($snapshot.BatteryPercent -ge 0) { " / $($snapshot.BatteryPercent)%" } else { '' }
         $runtimeEstimateText = if ($null -ne $snapshot.BatteryEstimatedHours) { " / est. $($snapshot.BatteryEstimatedHours)h $($snapshot.BatteryEstimateConfidence)" } else { '' }
         $batteryRateText = if ($null -ne $snapshot.BatteryDischargeW -and [double]$snapshot.BatteryDischargeW -gt 0) { " / discharge $($snapshot.BatteryDischargeW)W (avg $($snapshot.BatteryDischargeAverage10mW)W)$runtimeEstimateText" }
             elseif ($null -ne $snapshot.BatteryChargeW -and [double]$snapshot.BatteryChargeW -gt 0) { " / charging $($snapshot.BatteryChargeW)W" }
             else { '' }
         $sourceText = Get-SupplyDisplayName $snapshot.SupplyType
-        if ($snapshot.SupplyConfirmationPending) { $sourceText += ' (verifying PD; holding Hyper)' }
+        if ($snapshot.SupplyConfirmationPending) {
+            $verificationState = if ([string]$snapshot.SupplyType -eq 'HighPowerAC') {
+                'holding verified high-power AC'
+            }
+            else { 'AC not yet classified' }
+            $sourceText += " (verifying PD; $verificationState)"
+        }
         $limitText = if ($null -ne $snapshot.AdapterLimitW) { " / GPU limit $($snapshot.AdapterLimitW)W" } else { '' }
         $quietCpuText = if ($desired -eq 'Quiet') { " / CPU max $(Resolve-QuietCpuMaxPercent $script:Config $snapshot)%" } else { '' }
         $hyperCpuText = if ($desired -eq 'Hyper') { " / Hyper $((Resolve-HyperCpuPolicy $script:Config).Name)" } else { '' }
-        $activeName = try { Get-ActiveProfileName $script:State } catch { 'Unknown' }
-        $script:PowerLabel.Text = "Power: $sourceText$batteryText$batteryRateText$limitText$quietCpuText$hyperCpuText"
+        $activeName = if (-not [string]::IsNullOrWhiteSpace($ActiveName)) { $ActiveName }
+            elseif (-not [string]::IsNullOrWhiteSpace([string]$script:LastVerifiedActiveProfile)) { [string]$script:LastVerifiedActiveProfile }
+            else { 'Unknown' }
+        $manualEco = [string]$script:Config.Selection -eq 'Quiet' -and $desired -eq 'Quiet'
+        $selectionDisplayName = if ([string]$script:Config.Selection -eq 'Quiet') { 'Eco' } else { [string]$script:Config.Selection }
+        $desiredDisplayName = if ($desired -eq 'Quiet') { 'Eco' } else { $desired }
+        $activeDisplayName = if ($activeName -eq 'Quiet') { 'Eco' } else { $activeName }
         $healthText = if ($script:RuntimeHealth -eq 'Healthy') { 'Healthy' } elseif ($script:RuntimeHealth -eq 'Starting') { 'Starting' } else { 'Recovering' }
-        $temporaryText = if ($temporaryProfile) { "    Temporary: $temporaryProfile" } else { '' }
-        $script:ModeLabel.Text = "Selection: $($script:Config.Selection)$temporaryText    Target: $desired    Active: $activeName    Health: $healthText"
-        $script:StatusProfileValue.Text = $desired
+        $script:StatusMenu.Text = "$sourceText$batteryText - $desiredDisplayName - $healthText"
+        $script:TrayIcon.Text = "OpenSynapse - $desiredDisplayName - $healthText"
+        $script:AutoMenu.Checked = ([string]$script:Config.Selection -eq 'Auto')
+        $script:HyperMenu.Checked = ([string]$script:Config.Selection -eq 'Hyper')
+        $script:BalanceMenu.Checked = ([string]$script:Config.Selection -eq 'Balance')
+        $script:QuietMenu.Checked = ([string]$script:Config.Selection -eq 'Quiet')
+        if (-not $script:Form.Visible -and -not $captureUi) { return }
+        $script:PowerLabel.Text = "Power: $sourceText$batteryText$batteryRateText$limitText$quietCpuText$hyperCpuText"
+        $temporaryDisplayName = if ($temporaryProfile -eq 'Quiet') { 'Eco' } else { $temporaryProfile }
+        $temporaryText = if ($temporaryDisplayName) { "    Temporary: $temporaryDisplayName" } else { '' }
+        $script:ModeLabel.Text = "Selection: $selectionDisplayName$temporaryText    Target: $desiredDisplayName    Active: $activeDisplayName    Health: $healthText"
+        $script:StatusProfileValue.Text = $desiredDisplayName
         $script:StatusCpuValue.Text = if ([double]$script:AutomationState.LastCpuPercent -ge 0) { "$($script:AutomationState.LastCpuPercent)%" } else { 'Sampling' }
         $script:StatusGpuValue.Text = if ([double]$script:AutomationState.LastGpuPercent -ge 0) { "$($script:AutomationState.LastGpuPercent)%" } else { 'Sampling' }
         $script:StatusBatteryValue.Text = if ($snapshot.BatteryPercent -ge 0) { "$($snapshot.BatteryPercent)%" } else { 'Unavailable' }
@@ -4175,12 +4624,6 @@ function Start-TrayApplication {
             [Drawing.Color]::FromArgb(255, 180, 65)
         } else { $script:TextLight }
         $script:StatusHealthValue.Text = $healthText
-        $script:StatusMenu.Text = "$sourceText$batteryText - $desired - $healthText"
-        $script:TrayIcon.Text = "OpenSynapse - $desired - $healthText"
-        $script:AutoMenu.Checked = ([string]$script:Config.Selection -eq 'Auto')
-        $script:HyperMenu.Checked = ([string]$script:Config.Selection -eq 'Hyper')
-        $script:BalanceMenu.Checked = ([string]$script:Config.Selection -eq 'Balance')
-        $script:QuietMenu.Checked = ([string]$script:Config.Selection -eq 'Quiet')
         Set-RazerButtonStyle $autoButton ([string]$script:Config.Selection -eq 'Auto')
         Set-RazerButtonStyle $hyperButton ([string]$script:Config.Selection -eq 'Hyper')
         Set-RazerButtonStyle $balanceButton ([string]$script:Config.Selection -eq 'Balance')
@@ -4193,8 +4636,13 @@ function Start-TrayApplication {
             $script:PolicyHintLabel.Text = 'Warning: Hyper is manually overriding a battery, PD or unverified adapter; performance may be power-limited.'
             $script:PolicyHintLabel.ForeColor = [Drawing.Color]::FromArgb(255, 180, 65)
         }
+        elseif ([bool]$script:AutomationState.BatteryHighDrainDetected) {
+            $highDrainNames = [string[]]@($script:AutomationState.BatteryHighDrainProcesses | ForEach-Object { "$($_.ProcessName) $($_.CpuPercentOneCore)%" })
+            $script:PolicyHintLabel.Text = "Battery usage warning: sustained CPU from $($highDrainNames -join ', ') while discharging at $($script:AutomationState.BatteryHighDrainDischargeW) W. OpenSynapse did not stop any process."
+            $script:PolicyHintLabel.ForeColor = [Drawing.Color]::FromArgb(255, 180, 65)
+        }
         elseif ([string]$script:Config.Selection -eq 'Auto' -and -not [bool]$script:Config.SmartAutomationEnabled) {
-            $script:PolicyHintLabel.Text = 'Simple Auto: HighPowerAC uses Hyper; PD, battery and unverified AC use Quiet. Telemetry and dGPU diagnosis remain active.'
+            $script:PolicyHintLabel.Text = 'Simple Auto: HighPowerAC uses Hyper; PD, battery and unverified AC use Eco. Telemetry and dGPU diagnosis remain active.'
             $script:PolicyHintLabel.ForeColor = $script:TextMuted
         }
         elseif ([string]$script:Config.Selection -eq 'Auto') {
@@ -4216,7 +4664,8 @@ function Start-TrayApplication {
             $script:PolicyHintLabel.ForeColor = $script:TextMuted
         }
         elseif ($desired -eq 'Quiet') {
-            $script:PolicyHintLabel.Text = 'Quiet adaptive CPU: 75% at >=50%, 65% at 20-49%, 60% below 20%; Boost stays disabled.'
+            $quietModeName = if ([string]$script:Config.Selection -eq 'Quiet') { 'Eco: internal 60 Hz, HDR off' } else { 'Eco profile' }
+            $script:PolicyHintLabel.Text = "$quietModeName; adaptive CPU $($script:Config.QuietCpuMaxHighBattery)% at >=$($script:Config.QuietCpuMediumThreshold)%, $($script:Config.QuietCpuMaxMediumBattery)% at $($script:Config.QuietCpuLowThreshold)-$([int]$script:Config.QuietCpuMediumThreshold - 1)%, $($script:Config.QuietCpuMaxLowBattery)% below $($script:Config.QuietCpuLowThreshold)%; Boost stays disabled."
             $script:PolicyHintLabel.ForeColor = $script:TextMuted
         }
         else {
@@ -4264,6 +4713,7 @@ function Start-TrayApplication {
             [switch]$Full,
             [switch]$Notify,
             [switch]$ApplyVisualPolicy,
+            [switch]$ApplyRefreshPolicy,
             [switch]$RepairScaling,
             [AllowNull()][object]$Snapshot = $null,
             [switch]$AutomationAlreadyUpdated,
@@ -4281,6 +4731,7 @@ function Start-TrayApplication {
                 $RepairScaling = $true
             }
             $snapshot = if ($null -eq $Snapshot) { Get-PowerSnapshot } else { $Snapshot }
+            $null = Update-GpuTelemetryCadence $script:Config $snapshot ([string]$script:Config.Selection)
             if ([string]$script:Config.Selection -eq 'Balance' -and
                 -not (Test-BalanceEligible $snapshot ([int]$script:Config.BalanceBatteryThreshold))) {
                 $script:Config.Selection = 'Quiet'
@@ -4293,8 +4744,9 @@ function Start-TrayApplication {
             }
             $temporaryProfile = Get-TemporaryProfile $snapshot
             $desired = Get-DesiredProfile ([string]$script:Config.Selection) $snapshot $script:Config $script:AutomationState $temporaryProfile
-            $result = Set-ActiveProfile $desired $script:State $script:Config -Full:$Full -ApplyVisualPolicy:$ApplyVisualPolicy -RepairScaling:$RepairScaling -Snapshot $snapshot
+            $result = Set-ActiveProfile $desired $script:State $script:Config -Full:$Full -ApplyVisualPolicy:$ApplyVisualPolicy -ApplyRefreshPolicy:$ApplyRefreshPolicy -RepairScaling:$RepairScaling -Snapshot $snapshot
             $script:LastPlanVerification = Get-Date
+            $script:LastVerifiedActiveProfile = $desired
             $script:LastPowerSource = $snapshot.Source
             $script:LastSupplyType = $snapshot.SupplyType
             $script:LastDesiredProfile = $desired
@@ -4303,17 +4755,18 @@ function Start-TrayApplication {
                 $script:IgnoreDisplayEventsUntil = (Get-Date).AddSeconds(5)
                 $script:LastDisplayVersion = [OpenSynapseNative.DisplayChangeSignal]::Version
             }
-            Update-ApplicationUi
+            Update-ApplicationUi -Snapshot $snapshot -Desired $desired -TemporaryProfile $temporaryProfile -ActiveName $script:LastVerifiedActiveProfile
             if ($script:Form.Visible) { Update-DetailBox }
             if ($Notify) {
+                $appliedDisplayName = if ($desired -eq 'Quiet') { 'Eco' } else { $desired }
                 if (-not [string]::IsNullOrWhiteSpace([string]$result.RefreshWarning)) {
                     $script:TrayIcon.BalloonTipTitle = 'OpenSynapse display warning'
-                    $script:TrayIcon.BalloonTipText = "Applied $desired, but refresh policy failed: $($result.RefreshWarning)"
+                    $script:TrayIcon.BalloonTipText = "Applied $appliedDisplayName, but refresh policy failed: $($result.RefreshWarning)"
                     $script:TrayIcon.ShowBalloonTip(4500)
                 }
                 else {
                     $script:TrayIcon.BalloonTipTitle = 'OpenSynapse'
-                    $script:TrayIcon.BalloonTipText = "Applied $desired; plan verified=$($result.PlanVerified)."
+                    $script:TrayIcon.BalloonTipText = "Applied $appliedDisplayName; plan verified=$($result.PlanVerified)."
                     $script:TrayIcon.ShowBalloonTip(2200)
                 }
             }
@@ -4336,6 +4789,7 @@ function Start-TrayApplication {
 
     function Set-SelectionFromUi([ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet')][string]$Selection) {
         $snapshot = Get-PowerSnapshot -UseCachedAdapter
+        $previousSelection = [string]$script:Config.Selection
         if ($Selection -eq 'Hyper' -and $snapshot.SupplyType -ne 'HighPowerAC') {
             $answer = [Windows.Forms.MessageBox]::Show(
                 'The current source is battery, USB-C PD or unverified AC. Hyper can be selected, but CPU/GPU performance will remain limited by the available input power. Continue?',
@@ -4355,12 +4809,15 @@ function Start-TrayApplication {
         Clear-TemporaryOverride 'replaced by a persistent selection'
         $script:Config.Selection = $Selection
         Save-AppConfig $script:Config
-        Apply-CurrentSelection -Full -Notify
+        $ecoTransition = $Selection -eq 'Quiet' -or $previousSelection -eq 'Quiet'
+        Apply-CurrentSelection -Full -ApplyVisualPolicy:$ecoTransition -ApplyRefreshPolicy:$ecoTransition -Notify
     }
 
     function Save-OptionControls {
+        if ($script:SuppressOptionSave) { return }
         $script:Config.SmartAutomationEnabled = $script:SmartAutomationCheck.Checked
         $script:Config.CloseHighDrainAppsInQuiet = $script:CloseAppsCheck.Checked
+        $script:Config.BatteryHighDrainAlertsEnabled = $script:BatteryHighDrainCheck.Checked
         $script:Config.ManageAsusServices = $script:ServicesCheck.Checked
         $script:Config.ManageWakeDevices = $script:WakeCheck.Checked
         if ($script:HyperPolicyBox.SelectedIndex -ge 0) {
@@ -4439,7 +4896,7 @@ function Start-TrayApplication {
         $dialog.Dispose()
     })
 
-    foreach ($control in @($script:CloseAppsCheck, $script:ServicesCheck, $script:WakeCheck,
+    foreach ($control in @($script:CloseAppsCheck, $script:ServicesCheck, $script:WakeCheck, $script:BatteryHighDrainCheck,
         $script:ColorCheck, $script:BrightnessCheck, $script:ScalingCheck)) {
         $control.Add_CheckedChanged({ Save-OptionControls })
     }
@@ -4575,7 +5032,11 @@ function Start-TrayApplication {
         $script:RuntimeHealth = 'Healthy'
         $script:LastRuntimeError = ''
         $script:LastSuccessfulMonitorTick = Get-Date
-        $script:Timer.Interval = $script:MonitorBaseIntervalMs
+        $nextInterval = Resolve-MonitorIntervalMilliseconds $script:LastMonitorSnapshot $script:AutomationState ([string]$script:Config.Selection)
+        if ([int]$script:Timer.Interval -ne $nextInterval) {
+            $script:Timer.Interval = $nextInterval
+            Write-AppLog "Monitor cadence changed to $($nextInterval / 1000)s for source=$($script:LastMonitorSnapshot.Source) selection=$($script:Config.Selection)."
+        }
         try { Update-RuntimeHeartbeat } catch { Write-AppLog "Runtime heartbeat failed: $($_.Exception.Message)" }
     }
 
@@ -4614,8 +5075,10 @@ function Start-TrayApplication {
         $null = Register-PowerEventObservation ([OpenSynapseNative.PowerChangeSignal]::EventCount)
         $null = Invoke-PendingPowerProbe
         $snapshot = Get-PowerSnapshot -UseCachedAdapter
+        $null = Update-GpuTelemetryCadence $script:Config $snapshot ([string]$script:Config.Selection)
+        $selectionBeforeSupplyTransition = [string]$script:Config.Selection
         $selectionTransition = @{
-            Selection = [string]$script:Config.Selection
+            Selection = $selectionBeforeSupplyTransition
             PreviousSupplyType = [string]$script:LastSupplyType
             CurrentSupplyType = [string]$snapshot.SupplyType
         }
@@ -4625,6 +5088,28 @@ function Start-TrayApplication {
             $script:TemporaryOverride = $null
             Save-AppConfig $script:Config
             Write-AppLog 'Verified 280W-class adapter connection released the manual Quiet lock and restored Smart Auto.'
+        }
+        $refreshTransition = @{
+            RefreshPolicy = [string]$script:Config.RefreshPolicy
+            PreviousPowerSource = [string]$script:LastPowerSource
+            CurrentPowerSource = [string]$snapshot.Source
+            PreviousSupplyType = [string]$script:LastSupplyType
+            CurrentSupplyType = [string]$snapshot.SupplyType
+            PreviousSelection = $selectionBeforeSupplyTransition
+            CurrentSelection = [string]$script:Config.Selection
+        }
+        $refreshPolicyAfterPowerTransition = Resolve-RefreshPolicyAfterPowerTransition @refreshTransition
+        $refreshPolicyRestoredToAuto = $refreshPolicyAfterPowerTransition -ne [string]$script:Config.RefreshPolicy
+        if ($refreshPolicyRestoredToAuto) {
+            $script:Config.RefreshPolicy = $refreshPolicyAfterPowerTransition
+            $script:Config.ManageRefreshRate = $true
+            Save-AppConfig $script:Config
+            if ($null -ne $script:RefreshPolicyBox) {
+                $script:SuppressOptionSave = $true
+                try { $script:RefreshPolicyBox.SelectedIndex = [Array]::IndexOf([object[]]$script:RefreshPolicyValues, 'Auto') }
+                finally { $script:SuppressOptionSave = $false }
+            }
+            Write-AppLog 'External power connection restored the internal refresh policy from a manual fixed mode to Auto.'
         }
         $leakWasDetected = [bool]$script:AutomationState.DgpuLeakDetected
         try {
@@ -4642,6 +5127,23 @@ function Start-TrayApplication {
             }
         }
         catch { Write-AppLog "Smart automation telemetry failed: $($_.Exception.Message)" }
+        try {
+            $highDrain = Update-BatteryHighDrainState $script:Config $snapshot $script:AutomationState
+            if ([bool]$highDrain.ShouldNotify) {
+                $processText = [string[]]@($highDrain.Processes | ForEach-Object {
+                    $displayName = [string]$_.ProcessName
+                    if ($displayName.Length -gt 24) { $displayName = $displayName.Substring(0, 24) }
+                    "$displayName $($_.CpuPercentOneCore)%"
+                })
+                $message = "Sustained CPU while battery discharge is $($highDrain.DischargeW) W: $($processText -join ', ') (one-core scale). Review before closing; nothing was stopped."
+                if ($message.Length -gt 240) { $message = $message.Substring(0, 237) + '...' }
+                $script:TrayIcon.BalloonTipTitle = 'OpenSynapse battery usage'
+                $script:TrayIcon.BalloonTipText = $message
+                $script:TrayIcon.ShowBalloonTip(6000)
+                Write-AppLog "Battery high-drain process alert: confidence=$($highDrain.Confidence); discharge=$($highDrain.DischargeW)W; processes=$($processText -join ', '); no process was stopped."
+            }
+        }
+        catch { Write-AppLog "Battery high-drain sampling failed: $($_.Exception.Message)" }
         if (-not [string]::IsNullOrWhiteSpace([string]$script:AutomationState.ForegroundProcess) -and
             [string]$script:AutomationState.ForegroundProcess -notin @('powershell', 'pwsh')) {
             $script:LastExternalForegroundProcess = [string]$script:AutomationState.ForegroundProcess
@@ -4666,13 +5168,19 @@ function Start-TrayApplication {
         if ($powerChanged -or $profileChanged -or $planVerificationDue) {
             try {
                 $planOverridden = -not [string]::Equals((Get-ActivePlanGuid), $expectedGuid, [StringComparison]::OrdinalIgnoreCase)
+                if (-not $planOverridden) { $script:LastVerifiedActiveProfile = $desired }
                 $script:LastPlanVerification = Get-Date
             }
             catch { Write-AppLog "Active plan verification deferred: $($_.Exception.Message)" }
         }
 
         if ($powerChanged -or $profileChanged) {
-            $null = Apply-CurrentSelection -Full -Notify -Snapshot $snapshot -AutomationAlreadyUpdated -ThrowOnError -SilentError
+            $applyAutomaticRefresh = $powerChanged -and [string]$script:Config.RefreshPolicy -eq 'Auto'
+            $ecoReleased = $selectionBeforeSupplyTransition -eq 'Quiet' -and [string]$script:Config.Selection -eq 'Auto'
+            $ecoEntered = $selectionBeforeSupplyTransition -ne 'Quiet' -and [string]$script:Config.Selection -eq 'Quiet'
+            $applyEcoVisualPolicy = $ecoEntered -or $ecoReleased
+            $applyProfileRefresh = $applyAutomaticRefresh -or $applyEcoVisualPolicy
+            $null = Apply-CurrentSelection -Full -ApplyVisualPolicy:$applyEcoVisualPolicy -ApplyRefreshPolicy:$applyProfileRefresh -Notify -Snapshot $snapshot -AutomationAlreadyUpdated -ThrowOnError -SilentError
         }
         elseif ($planOverridden) {
             $null = Apply-CurrentSelection -Snapshot $snapshot -AutomationAlreadyUpdated -ThrowOnError -SilentError
@@ -4685,8 +5193,8 @@ function Start-TrayApplication {
                 if (@($maintenanceResult.CoolingDown).Count -gt 0) {
                     $coolingNames = [string[]]@($maintenanceResult.CoolingDown)
                     $cooldownMinutes = [Math]::Round([int]$script:Config.QuietProcessCooldownSeconds / 60)
-                    $script:TrayIcon.BalloonTipTitle = 'OpenSynapse Quiet cooling'
-                    $script:TrayIcon.BalloonTipText = "$($coolingNames -join ', ') restarted after Quiet closed it. Process enforcement is paused for $cooldownMinutes minutes to avoid a restart loop; disable its auto-start to keep it off."
+                    $script:TrayIcon.BalloonTipTitle = 'OpenSynapse Eco cooling'
+                    $script:TrayIcon.BalloonTipText = "$($coolingNames -join ', ') restarted after Eco closed it. Process enforcement is paused for $cooldownMinutes minutes to avoid a restart loop; disable its auto-start to keep it off."
                     $script:TrayIcon.ShowBalloonTip(6000)
                 }
             }
@@ -4722,7 +5230,8 @@ function Start-TrayApplication {
                 throw
             }
         }
-        Update-ApplicationUi
+        $script:LastMonitorSnapshot = $snapshot
+        Update-ApplicationUi -Snapshot $snapshot -Desired $desired -TemporaryProfile $temporaryProfile -ActiveName $script:LastVerifiedActiveProfile
     }
 
     $script:Timer = New-Object Windows.Forms.Timer
@@ -4821,12 +5330,28 @@ function Start-TrayApplication {
     $showOnStart = Test-Path -LiteralPath $script:ShowRequestPath
     Remove-Item -LiteralPath $script:ShowRequestPath -Force -ErrorAction SilentlyContinue
     Initialize-SupplyStabilizer (Get-ActiveProfileName $script:State)
-    Write-AppLog "Tray started. Selection=$($script:Config.Selection) Dpi=$script:DpiMode seamlessModeSwitching=$($script:Config.SeamlessModeSwitching)"
-    Apply-CurrentSelection -Full
+    $startupSnapshot = Get-PowerSnapshot
+    $startupSelectionBeforeSupplyTransition = [string]$script:Config.Selection
+    $startupSelection = Resolve-SelectionAfterSupplyTransition $startupSelectionBeforeSupplyTransition '' ([string]$startupSnapshot.SupplyType)
+    if ($startupSelection -ne [string]$script:Config.Selection) {
+        $script:Config.Selection = $startupSelection
+        $script:TemporaryOverride = $null
+        $script:Config.RefreshPolicy = Resolve-RefreshPolicyAfterPowerTransition ([string]$script:Config.RefreshPolicy) '' ([string]$startupSnapshot.Source) '' ([string]$startupSnapshot.SupplyType) $startupSelectionBeforeSupplyTransition $startupSelection
+        $script:Config.ManageRefreshRate = ([string]$script:Config.RefreshPolicy -ne 'Unmanaged')
+        Save-AppConfig $script:Config
+        Write-AppLog 'Verified 280W-class adapter at startup released Eco, restored Smart Auto and selected the 240 Hz Auto refresh policy before Quiet maintenance ran.'
+    }
+    Write-AppLog "Tray started. Version=$script:AppVersion Selection=$($script:Config.Selection) Dpi=$script:DpiMode seamlessModeSwitching=$($script:Config.SeamlessModeSwitching)"
+    $startupEcoSelected = $startupSelectionBeforeSupplyTransition -eq 'Quiet'
+    $applyStartupRefresh = [string]$script:Config.RefreshPolicy -eq 'Auto'
+    Write-AppLog "Startup profile apply beginning: selection=$($script:Config.Selection) supply=$($startupSnapshot.SupplyType) refresh=$($script:Config.RefreshPolicy)."
+    Apply-CurrentSelection -Full -ApplyVisualPolicy:$startupEcoSelected -ApplyRefreshPolicy:($applyStartupRefresh -or $startupEcoSelected) -Snapshot $startupSnapshot
+    Write-AppLog 'Startup profile apply completed.'
     $script:Timer.Start()
     $script:Form.Add_Shown({
         $null = [OpenSynapseNative.WindowTheme]::ApplyDarkFrame($script:Form.Handle)
         Apply-DarkControlTheme $script:Form
+        Update-ApplicationUi
         if (-not $showOnStart) { $script:Form.Hide() } else { Update-DetailBox }
     })
 

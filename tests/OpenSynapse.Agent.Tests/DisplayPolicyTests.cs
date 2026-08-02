@@ -53,7 +53,7 @@ public sealed class DisplayPolicyTests
 
         Assert.AreEqual(82, displaySystem.Brightness);
         Assert.IsTrue(displaySystem.Colors["hdr"].Enabled);
-        Assert.AreEqual(1, displaySystem.MaximumRefreshApplications);
+        Assert.AreEqual(1, displaySystem.DynamicRefreshApplications);
         CollectionAssert.AreEqual(
             new[] { ("internal", 150) },
             displaySystem.ScaleWrites);
@@ -77,7 +77,8 @@ public sealed class DisplayPolicyTests
         {
             BalancedBrightnessPercent = 65,
             BalancedRefreshRateHz = 144,
-            InternalDisplayScalePercent = 175
+            InternalDisplayScalePercent = 175,
+            RefreshPolicy = RefreshPolicy.FollowMode
         };
 
         policy.Capture(OperatingMode.Balanced, state, config);
@@ -141,6 +142,35 @@ public sealed class DisplayPolicyTests
 
         CollectionAssert.AreEqual(new[] { 240 }, displaySystem.FixedRefreshApplications);
         Assert.AreEqual(1, displaySystem.RefreshRestorations);
+    }
+
+    [TestMethod]
+    public void AutoRefreshUsesDynamicOnPortablePowerAndFixed240OnVerifiedHighPowerAc()
+    {
+        var displaySystem = new FakeDisplaySystem();
+        var policy = new DisplayPolicy(displaySystem);
+        var state = new OpenSynapseState();
+        var config = new OpenSynapseConfig
+        {
+            ManageAdvancedColor = false,
+            ManageBrightness = false,
+            ManageDisplayScaling = false,
+            RefreshPolicy = RefreshPolicy.Auto
+        };
+
+        policy.Apply(
+            OperatingMode.Quiet,
+            state,
+            config,
+            powerSnapshot: new PowerSnapshot(PowerSource.Battery, SupplyType.Battery, 80));
+        policy.Apply(
+            OperatingMode.Performance,
+            state,
+            config,
+            powerSnapshot: new PowerSnapshot(PowerSource.Ac, SupplyType.HighPowerAc, 80));
+
+        Assert.AreEqual(1, displaySystem.DynamicRefreshApplications);
+        CollectionAssert.AreEqual(new[] { 240 }, displaySystem.FixedRefreshApplications);
     }
 
     [TestMethod]
@@ -229,6 +259,7 @@ public sealed class DisplayPolicyTests
         public List<int> FixedRefreshApplications { get; } = [];
         public int? Brightness { get; set; }
         public int MaximumRefreshApplications { get; private set; }
+        public int DynamicRefreshApplications { get; private set; }
         public int RefreshRestorations { get; private set; }
         public bool ThrowOnRefreshRestore { get; init; }
 
@@ -261,7 +292,7 @@ public sealed class DisplayPolicyTests
 
         public void ApplyFixedRefresh(int targetHz) => FixedRefreshApplications.Add(targetHz);
 
-        public void ApplyDynamicNativeRefresh() => throw new InvalidOperationException("Dynamic refresh not available in fake.");
+        public void ApplyDynamicNativeRefresh() => DynamicRefreshApplications++;
 
         public void RestoreRefresh()
         {

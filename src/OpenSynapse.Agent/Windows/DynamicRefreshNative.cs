@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
 using System.Runtime.InteropServices;
 
 namespace PowerPilotNative;
@@ -29,6 +31,7 @@ public static class DynamicRefreshManager
     private const uint BoostRefreshRate = 0x00000010;
     private const uint InternalOutput = 0x80000000;
     private const uint InvalidModeIndex = 0x0000ffff;
+    private const uint GetSourceName = 1;
     private const int Success = 0;
     private const int InsufficientBuffer = 122;
 
@@ -100,6 +103,16 @@ public static class DynamicRefreshManager
     [StructLayout(LayoutKind.Sequential)]
     private struct ModeInfo { public uint Type; public uint Id; public Luid Adapter; public ModeUnion Data; }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct DeviceInfoHeader { public uint Type; public uint Size; public Luid Adapter; public uint Id; }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct SourceDeviceName
+    {
+        public DeviceInfoHeader Header;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string ViewGdiDeviceName;
+    }
+
     [DllImport("user32.dll")]
     private static extern int GetDisplayConfigBufferSizes(uint flags, out uint paths, out uint modes);
 
@@ -119,6 +132,9 @@ public static class DynamicRefreshManager
         uint modes,
         [In] ModeInfo[] modeArray,
         uint flags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int DisplayConfigGetDeviceInfo(ref SourceDeviceName requestPacket);
 
     private static void Query(out PathInfo[] paths, out ModeInfo[] modes)
     {
@@ -140,6 +156,37 @@ public static class DynamicRefreshManager
     }
 
     private static bool IsInternal(PathInfo path) => path.Target.OutputTechnology == InternalOutput;
+
+    private static string[] GetDisplayDeviceNames(bool internalDisplay)
+    {
+        Query(out var paths, out _);
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in paths)
+        {
+            if (IsInternal(path) != internalDisplay) continue;
+            var packet = new SourceDeviceName
+            {
+                Header = new DeviceInfoHeader
+                {
+                    Type = GetSourceName,
+                    Size = (uint)Marshal.SizeOf<SourceDeviceName>(),
+                    Adapter = path.Source.Adapter,
+                    Id = path.Source.Id
+                },
+                ViewGdiDeviceName = string.Empty
+            };
+            if (DisplayConfigGetDeviceInfo(ref packet) == Success && !string.IsNullOrWhiteSpace(packet.ViewGdiDeviceName))
+                names.Add(packet.ViewGdiDeviceName);
+        }
+        return names.ToArray();
+    }
+
+    public static int ApplyExternalMaximumRefresh() =>
+        DisplayModeManager.ApplyMaximumRefresh(GetDisplayDeviceNames(false));
+
+    public static int ApplyProfileRefresh(int internalTargetHz) =>
+        ApplyExternalMaximumRefresh()
+        + DisplayModeManager.ApplyFixedRefresh(internalTargetHz, GetDisplayDeviceNames(true));
 
     private static int RationalHz(Rational value) => value.Denominator == 0
         ? 0
@@ -203,7 +250,10 @@ public static class DynamicRefreshManager
         if (!before.Supported)
             throw new InvalidOperationException("The internal display path does not support Windows dynamic refresh.");
 
-        var changed = DisplayModeManager.ApplyFixedRefresh(120);
+        var changed = ApplyExternalMaximumRefresh();
+        if (before.Enabled && Math.Abs(before.BaseFrequency - 60) <= 1 && before.BoostFrequency > 60)
+            return changed;
+        changed += DisplayModeManager.ApplyMaximumRefresh(GetDisplayDeviceNames(true));
         Query(out var paths, out var modes);
         for (var index = 0; index < paths.Length; index++)
         {
@@ -222,6 +272,7 @@ public static class DynamicRefreshManager
         if (!after.Enabled || Math.Abs(after.BaseFrequency - 60) > 1 || after.BoostFrequency <= 60)
         {
             try { Disable(); } catch { }
+            try { DisplayModeManager.ApplyMaximumRefresh(GetDisplayDeviceNames(true)); } catch { }
             throw new InvalidOperationException("Windows accepted the request but did not report a valid native dynamic refresh range.");
         }
         return changed + 1;

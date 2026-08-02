@@ -228,11 +228,12 @@ internal sealed class AgentController
 
             case AgentOperation.ApplyDisplayPolicyNow:
                 RequireAdministrator();
+                var explicitPower = powerSupply.GetSnapshot();
                 var explicitMode = state.ActiveMode
-                    ?? ResolveDesiredMode(state, config, powerSupply.GetSnapshot(), telemetry.Read());
+                    ?? ResolveDesiredMode(state, config, explicitPower, telemetry.Read());
                 displays.Capture(explicitMode, state, config);
                 store.Save(state);
-                displays.Apply(explicitMode, state, config, applyDisplaySettings: true);
+                displays.Apply(explicitMode, state, config, applyDisplaySettings: true, powerSnapshot: explicitPower);
                 _ = log.TryWrite("display.explicit-apply", explicitMode.ToString());
                 return new AgentResponse(true, "Display policy applied. The display link may blink briefly.", GetStatus(state, config));
 

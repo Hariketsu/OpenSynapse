@@ -28,6 +28,7 @@ foreach ($required in @(
     'RunLevel Highest',
     '-ExecutionTimeLimit ([TimeSpan]::Zero)',
     '-WindowStyle Hidden -STA',
+    'did not reach Healthy with a successful monitor tick within 60 seconds',
     'function Remove-LegacyDotNetRuntime',
     'function Remove-LegacyPowerPilotRuntime',
     'PowerPilot-2.4.1-migration-',
@@ -38,7 +39,7 @@ foreach ($required in @(
         throw "Installer runtime definition is missing: $required"
     }
 }
-foreach ($required in @('src\OpenSynapse.PowerShell', 'OpenSynapse-2.4.2.zip', 'Compress-Archive')) {
+foreach ($required in @('src\OpenSynapse.PowerShell', 'OpenSynapse-2.4.6.zip', 'Compress-Archive')) {
     if ($publishSource.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "Publisher definition is missing: $required"
     }

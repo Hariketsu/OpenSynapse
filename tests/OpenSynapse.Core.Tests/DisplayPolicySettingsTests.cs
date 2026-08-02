@@ -35,7 +35,7 @@ public sealed class DisplayPolicySettingsTests
         true,
         true,
         true,
-        RefreshPolicy.FollowMode,
+        RefreshPolicy.Auto,
         150,
         125,
         60,

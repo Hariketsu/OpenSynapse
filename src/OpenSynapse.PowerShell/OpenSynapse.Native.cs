@@ -250,6 +250,111 @@ namespace OpenSynapseNative
         }
     }
 
+    public sealed class ProcessCpuSample
+    {
+        public string ProcessName { get; set; }
+        public double CpuPercentOneCore { get; set; }
+        public long WorkingSetBytes { get; set; }
+        public int ProcessCount { get; set; }
+    }
+
+    public static class ProcessCpuSampler
+    {
+        private sealed class ProcessSnapshot
+        {
+            public string Name;
+            public long CpuTicks;
+        }
+
+        private sealed class Aggregate
+        {
+            public string Name;
+            public long CpuTicks;
+            public long WorkingSetBytes;
+            public int ProcessCount;
+        }
+
+        private static readonly object SyncRoot = new object();
+        private static Dictionary<int, ProcessSnapshot> previous = new Dictionary<int, ProcessSnapshot>();
+        private static long previousTimestamp;
+
+        public static void Reset()
+        {
+            lock (SyncRoot)
+            {
+                previous = new Dictionary<int, ProcessSnapshot>();
+                previousTimestamp = 0;
+            }
+        }
+
+        public static ProcessCpuSample[] Sample()
+        {
+            lock (SyncRoot)
+            {
+                long now = Stopwatch.GetTimestamp();
+                double elapsedSeconds = previousTimestamp == 0
+                    ? 0.0
+                    : (double)(now - previousTimestamp) / Stopwatch.Frequency;
+                Dictionary<int, ProcessSnapshot> current = new Dictionary<int, ProcessSnapshot>();
+                Dictionary<string, Aggregate> aggregates = new Dictionary<string, Aggregate>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (Process process in Process.GetProcesses())
+                {
+                    try
+                    {
+                        string name = process.ProcessName;
+                        long cpuTicks = process.TotalProcessorTime.Ticks;
+                        long workingSet = process.WorkingSet64;
+                        current[process.Id] = new ProcessSnapshot { Name = name, CpuTicks = cpuTicks };
+
+                        Aggregate aggregate;
+                        if (!aggregates.TryGetValue(name, out aggregate))
+                        {
+                            aggregate = new Aggregate { Name = name };
+                            aggregates.Add(name, aggregate);
+                        }
+                        aggregate.ProcessCount++;
+                        aggregate.WorkingSetBytes += Math.Max(0, workingSet);
+
+                        ProcessSnapshot old;
+                        if (elapsedSeconds > 0.0 && previous.TryGetValue(process.Id, out old) &&
+                            String.Equals(old.Name, name, StringComparison.OrdinalIgnoreCase) && cpuTicks >= old.CpuTicks)
+                        {
+                            aggregate.CpuTicks += cpuTicks - old.CpuTicks;
+                        }
+                    }
+                    catch (InvalidOperationException) { }
+                    catch (Win32Exception) { }
+                    catch (NotSupportedException) { }
+                    finally { process.Dispose(); }
+                }
+
+                previous = current;
+                previousTimestamp = now;
+                if (elapsedSeconds <= 0.0) return new ProcessCpuSample[0];
+
+                List<ProcessCpuSample> result = new List<ProcessCpuSample>();
+                foreach (Aggregate aggregate in aggregates.Values)
+                {
+                    if (aggregate.CpuTicks <= 0) continue;
+                    double cpu = aggregate.CpuTicks * 100.0 / TimeSpan.TicksPerSecond / elapsedSeconds;
+                    result.Add(new ProcessCpuSample
+                    {
+                        ProcessName = aggregate.Name,
+                        CpuPercentOneCore = Math.Round(Math.Max(0.0, Math.Min(Environment.ProcessorCount * 100.0, cpu)), 1),
+                        WorkingSetBytes = aggregate.WorkingSetBytes,
+                        ProcessCount = aggregate.ProcessCount
+                    });
+                }
+                result.Sort(delegate(ProcessCpuSample left, ProcessCpuSample right)
+                {
+                    return right.CpuPercentOneCore.CompareTo(left.CpuPercentOneCore);
+                });
+                return result.ToArray();
+            }
+        }
+    }
+
     public static class BatteryTelemetry
     {
         private static readonly Guid BatteryInterfaceGuid = new Guid("72631e54-78A4-11d0-bcf7-00aa00b7b32a");
@@ -487,6 +592,8 @@ namespace OpenSynapseNative
 
         public sealed class GpuSample
         {
+            public long Sequence { get; set; }
+            public long SampledAtUtcTicks { get; set; }
             public bool Available { get; set; }
             public double TotalUtilizationPercent { get; set; }
             public double DiscreteUtilizationPercent { get; set; }
@@ -512,6 +619,8 @@ namespace OpenSynapseNative
         private static Thread worker;
         private static readonly AutoResetEvent StopEvent = new AutoResetEvent(false);
         private static volatile bool stopRequested;
+        private static int sampleIntervalMilliseconds = 10000;
+        private static long sampleSequence;
         private static readonly Regex InstancePattern = new Regex(
             @"pid_(?<pid>\d+)_luid_0x(?<high>[0-9a-f]+)_0x(?<low>[0-9a-f]+)_phys_\d+_eng_\d+_engtype_(?<type>.+)$",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -692,8 +801,21 @@ namespace OpenSynapseNative
                     result.Available = true;
                 }
                 catch (Exception exception) { result.Error = exception.Message; }
+                result.Sequence = Interlocked.Increment(ref sampleSequence);
+                result.SampledAtUtcTicks = DateTime.UtcNow.Ticks;
                 return result;
             }
+        }
+
+        private static GpuSample CreateErrorSample(Exception exception)
+        {
+            return new GpuSample
+            {
+                Sequence = Interlocked.Increment(ref sampleSequence),
+                SampledAtUtcTicks = DateTime.UtcNow.Ticks,
+                Consumers = new GpuConsumer[0],
+                Error = exception.Message
+            };
         }
 
         public static GpuSample Read()
@@ -712,25 +834,35 @@ namespace OpenSynapseNative
         {
             lock (SyncRoot)
             {
+                SetInterval(intervalMilliseconds);
                 if (worker != null && worker.IsAlive) return;
                 stopRequested = false;
-                int interval = Math.Max(2000, intervalMilliseconds);
                 worker = new Thread(delegate()
                 {
                     while (!stopRequested)
                     {
                         try { latestSample = SampleCore(); }
-                        catch (Exception exception)
-                        {
-                            latestSample = new GpuSample { Consumers = new GpuConsumer[0], Error = exception.Message };
-                        }
-                        if (StopEvent.WaitOne(interval)) break;
+                        catch (Exception exception) { latestSample = CreateErrorSample(exception); }
+                        StopEvent.WaitOne(Volatile.Read(ref sampleIntervalMilliseconds));
                     }
                 });
                 worker.IsBackground = true;
                 worker.Name = "OpenSynapse GPU telemetry";
                 worker.Start();
             }
+        }
+
+        public static void SetInterval(int intervalMilliseconds)
+        {
+            int normalized = Math.Max(2000, intervalMilliseconds);
+            int previous = Interlocked.Exchange(ref sampleIntervalMilliseconds, normalized);
+            Thread thread = worker;
+            if (previous != normalized && thread != null && thread.IsAlive) StopEvent.Set();
+        }
+
+        public static int GetInterval()
+        {
+            return Volatile.Read(ref sampleIntervalMilliseconds);
         }
 
         public static void Stop()
@@ -1605,6 +1737,18 @@ namespace OpenSynapseNative
             return changed;
         }
 
+        public static int ApplyMaximumRefresh(string[] deviceNames)
+        {
+            if (deviceNames == null || deviceNames.Length == 0)
+                return 0;
+            HashSet<string> selected = new HashSet<string>(deviceNames, StringComparer.OrdinalIgnoreCase);
+            int changed = 0;
+            foreach (DISPLAY_DEVICE device in GetActiveDevices())
+                if (selected.Contains(device.DeviceName))
+                    changed += ApplyFrequency(device, true, 60, false);
+            return changed;
+        }
+
         public static int ApplyQuietRefresh(int targetHz)
         {
             int changed = 0;
@@ -1615,7 +1759,17 @@ namespace OpenSynapseNative
 
         public static int ApplyFixedRefresh(int targetHz)
         {
+            return ApplyFixedRefresh(targetHz, null);
+        }
+
+        public static int ApplyFixedRefresh(int targetHz, string[] deviceNames)
+        {
             List<DISPLAY_DEVICE> devices = GetActiveDevices();
+            if (deviceNames != null)
+            {
+                HashSet<string> selected = new HashSet<string>(deviceNames, StringComparer.OrdinalIgnoreCase);
+                devices = devices.FindAll(delegate(DISPLAY_DEVICE device) { return selected.Contains(device.DeviceName); });
+            }
             foreach (DISPLAY_DEVICE device in devices)
             {
                 DEVMODE current = NewMode();
@@ -1713,6 +1867,7 @@ namespace OpenSynapseNative
         private const uint DISPLAYCONFIG_PATH_BOOST_REFRESH_RATE = 0x00000010;
         private const uint DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INTERNAL = 0x80000000;
         private const uint DISPLAYCONFIG_PATH_MODE_IDX_INVALID = 0x0000ffff;
+        private const uint DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME = 1;
         private const int ERROR_SUCCESS = 0;
         private const int ERROR_INSUFFICIENT_BUFFER = 122;
 
@@ -1758,6 +1913,14 @@ namespace OpenSynapseNative
         }
         [StructLayout(LayoutKind.Sequential)]
         private struct MODE_INFO { public uint type; public uint id; public LUID adapterId; public MODE_UNION data; }
+        [StructLayout(LayoutKind.Sequential)]
+        private struct DEVICE_INFO_HEADER { public uint type; public uint size; public LUID adapterId; public uint id; }
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct SOURCE_DEVICE_NAME
+        {
+            public DEVICE_INFO_HEADER header;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string viewGdiDeviceName;
+        }
 
         [DllImport("user32.dll")]
         private static extern int GetDisplayConfigBufferSizes(uint flags, out uint paths, out uint modes);
@@ -1767,6 +1930,8 @@ namespace OpenSynapseNative
         [DllImport("user32.dll")]
         private static extern int SetDisplayConfig(uint pathCount, [In] PATH_INFO[] paths,
             uint modeCount, [In] MODE_INFO[] modes, uint flags);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern int DisplayConfigGetDeviceInfo(ref SOURCE_DEVICE_NAME requestPacket);
 
         private static void Query(out PATH_INFO[] paths, out MODE_INFO[] modes)
         {
@@ -1797,6 +1962,47 @@ namespace OpenSynapseNative
         private static bool IsInternal(PATH_INFO path)
         {
             return path.targetInfo.outputTechnology == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INTERNAL;
+        }
+
+        private static string[] GetDisplayDeviceNames(bool internalDisplay)
+        {
+            PATH_INFO[] paths;
+            MODE_INFO[] modes;
+            Query(out paths, out modes);
+            HashSet<string> names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (PATH_INFO path in paths)
+            {
+                if (IsInternal(path) != internalDisplay)
+                    continue;
+                SOURCE_DEVICE_NAME packet = new SOURCE_DEVICE_NAME();
+                packet.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+                packet.header.size = (uint)Marshal.SizeOf(typeof(SOURCE_DEVICE_NAME));
+                packet.header.adapterId = path.sourceInfo.adapterId;
+                packet.header.id = path.sourceInfo.id;
+                packet.viewGdiDeviceName = String.Empty;
+                if (DisplayConfigGetDeviceInfo(ref packet) == ERROR_SUCCESS && !String.IsNullOrWhiteSpace(packet.viewGdiDeviceName))
+                    names.Add(packet.viewGdiDeviceName);
+            }
+            string[] result = new string[names.Count];
+            names.CopyTo(result);
+            return result;
+        }
+
+        public static int ApplyExternalMaximumRefresh()
+        {
+            return DisplayModeManager.ApplyMaximumRefresh(GetDisplayDeviceNames(false));
+        }
+
+        public static int ApplyInternalFixedRefresh(int targetHz)
+        {
+            return DisplayModeManager.ApplyFixedRefresh(targetHz, GetDisplayDeviceNames(true));
+        }
+
+        public static int ApplyProfileRefresh(int internalTargetHz)
+        {
+            int changed = ApplyExternalMaximumRefresh();
+            changed += ApplyInternalFixedRefresh(internalTargetHz);
+            return changed;
         }
 
         private static int RationalHz(RATIONAL value)
@@ -1872,7 +2078,10 @@ namespace OpenSynapseNative
             if (!before.Supported)
                 throw new InvalidOperationException("The internal display path does not support Windows dynamic refresh.");
 
-            int changed = DisplayModeManager.ApplyFixedRefresh(120);
+            int changed = ApplyExternalMaximumRefresh();
+            if (before.Enabled && Math.Abs(before.BaseFrequency - 60) <= 1 && before.BoostFrequency > 60)
+                return changed;
+            changed += DisplayModeManager.ApplyMaximumRefresh(GetDisplayDeviceNames(true));
             PATH_INFO[] paths;
             MODE_INFO[] modes;
             Query(out paths, out modes);
@@ -1895,7 +2104,7 @@ namespace OpenSynapseNative
             if (!after.Enabled || Math.Abs(after.BaseFrequency - 60) > 1 || after.BoostFrequency <= 60)
             {
                 try { Disable(); } catch { }
-                try { DisplayModeManager.ApplyFixedRefresh(120); } catch { }
+                try { DisplayModeManager.ApplyMaximumRefresh(GetDisplayDeviceNames(true)); } catch { }
                 throw new InvalidOperationException("Windows accepted the request but did not report a valid native dynamic refresh range.");
             }
             return changed + 1;

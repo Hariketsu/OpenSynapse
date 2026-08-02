@@ -39,6 +39,21 @@ if ($autoDecision.Profile -ne 'Balance') { throw 'Auto did not promote a sustain
 if ((Get-DesiredProfile Quiet $portable $config $autoState) -ne 'Quiet') {
     throw 'Manual Quiet did not override the automatic Balance decision.'
 }
+$config.Selection = 'Auto'
+if ((Resolve-RefreshPolicy $config Quiet $portable) -ne 'DynamicNative') {
+    throw 'An automatic portable Quiet profile did not preserve native dynamic refresh.'
+}
+$config.Selection = 'Quiet'
+if ((Resolve-RefreshPolicy $config Quiet $portable) -ne 'Fixed60') {
+    throw 'Manual Quiet did not resolve to Eco internal 60 Hz.'
+}
+$config.ManageRefreshRate = $false
+$config.RefreshPolicy = 'Unmanaged'
+if ((Resolve-RefreshPolicy $config Quiet $portable) -ne 'Fixed60') {
+    throw 'Eco did not enforce internal 60 Hz when refresh management was previously disabled.'
+}
+$config.ManageRefreshRate = $true
+$config.RefreshPolicy = 'Auto'
 if ((Resolve-SelectionAfterSupplyTransition Quiet Battery Battery) -ne 'Quiet' -or
     (Resolve-SelectionAfterSupplyTransition Quiet Battery LowPowerPD) -ne 'Quiet' -or
     (Resolve-SelectionAfterSupplyTransition Quiet HighPowerAC HighPowerAC) -ne 'Quiet') {
@@ -46,8 +61,13 @@ if ((Resolve-SelectionAfterSupplyTransition Quiet Battery Battery) -ne 'Quiet' -
 }
 if ((Resolve-SelectionAfterSupplyTransition Quiet Battery HighPowerAC) -ne 'Auto' -or
     (Resolve-SelectionAfterSupplyTransition Quiet LowPowerPD HighPowerAC) -ne 'Auto' -or
+    (Resolve-SelectionAfterSupplyTransition Quiet '' HighPowerAC) -ne 'Auto' -or
     (Resolve-SelectionAfterSupplyTransition Auto Battery HighPowerAC) -ne 'Auto') {
     throw 'A verified 280W-class adapter connection did not restore Auto from manual Quiet.'
+}
+if ((Resolve-RefreshPolicyAfterPowerTransition Unmanaged Battery AC Battery HighPowerAC Quiet Auto) -ne 'Auto' -or
+    (Resolve-RefreshPolicyAfterPowerTransition Fixed60 Battery AC Battery HighPowerAC Quiet Auto) -ne 'Auto') {
+    throw 'A verified 280W-class adapter connection did not restore Auto refresh after Eco.'
 }
 
 $script:RecordedQuietLogs = New-Object Collections.Generic.List[string]
@@ -102,8 +122,8 @@ if (@($script:RecordedQuietLogs | Where-Object { $_ -match 'restart detected.*co
     throw 'Quiet process restart cooldown was not logged exactly once.'
 }
 
-# Telemetry schema v2 records the actual plan and the battery fields needed for
-# endurance analysis.
+# Telemetry schema v3 records the actual plan, battery endurance fields and the
+# adapter-classification evidence without performing another hardware probe.
 $temporary = Join-Path (Split-Path -Parent $PSScriptRoot) '.quiet-control-test'
 if (Test-Path -LiteralPath $temporary) { throw "Test directory already exists: $temporary" }
 $oldDataDir = $script:DataDir
@@ -115,6 +135,9 @@ try {
     $telemetrySnapshot = [pscustomobject]@{
         Source = 'Battery'
         SupplyType = 'Battery'
+        RawSupplyType = 'Battery'
+        SupplyConfirmationPending = $false
+        AdapterLimitW = $null
         BatteryPercent = 80
         BatteryRemainingMwh = 64000
         BatteryVoltageMv = 16335
@@ -127,10 +150,12 @@ try {
     }
     Write-TelemetryRecord $telemetrySnapshot $manualState Quiet Quiet '' Quiet
     $record = Get-Content -LiteralPath $script:TelemetryPath -Raw | ConvertFrom-Json
-    if ($record.SchemaVersion -ne 2 -or $record.ActiveProfile -ne 'Quiet' -or
+    if ($record.SchemaVersion -ne 5 -or $record.OpenSynapseVersion -ne '2.4.6' -or
+        $record.SupplyClassifierVersion -ne 2 -or $record.RawSupplyType -ne 'Battery' -or
+        $record.SupplyConfirmationPending -or $record.ActiveProfile -ne 'Quiet' -or
         $record.BatteryRemainingMwh -ne 64000 -or $record.BatteryVoltageMv -ne 16335 -or
         $record.EstimatedHours -ne 4.0) {
-        throw 'Telemetry schema v2 is missing an active-profile or battery endurance field.'
+        throw 'Telemetry schema v3 is missing classification evidence, active-profile or battery endurance fields.'
     }
 }
 finally {
@@ -140,6 +165,32 @@ finally {
 }
 
 $source = Get-Content -LiteralPath $mainScript -Raw -Encoding UTF8
+foreach ($requiredUiDefinition in @(
+    "`$quietButton.Text = 'Eco'",
+    "`$script:QuietMenu = `$menu.Items.Add('Lock Eco')",
+    "DropDownItems.Add('Eco for 30 minutes')",
+    "New-OptionCheck 'Eco: close high-drain helper apps'",
+    "`$quietPolicyLabel.Text = 'Eco CPU policy'",
+    "`$brightnessLabel.Text = 'Eco ceiling'",
+    "Items.AddRange(@('Hyper', 'Balance', 'Eco'))",
+    "if (`$profileDisplayName -eq 'Eco') { 'Quiet' }"
+)) {
+    if ($source.IndexOf($requiredUiDefinition, [StringComparison]::Ordinal) -lt 0) {
+        throw "Missing Eco-only UI definition: $requiredUiDefinition"
+    }
+}
+if ($source -match 'Eco \(.*Quiet' -or
+    $source.IndexOf("New-OptionCheck 'Quiet:", [StringComparison]::Ordinal) -ge 0 -or
+    $source.IndexOf("Items.AddRange(@('Hyper', 'Balance', 'Quiet'))", [StringComparison]::Ordinal) -ge 0) {
+    throw 'A visible UI mode name still exposes Quiet instead of Eco.'
+}
+$telemetryStart = $source.IndexOf('function Write-TelemetryRecord', [StringComparison]::Ordinal)
+$telemetryEnd = $source.IndexOf('function Export-OpenSynapseDiagnostics', $telemetryStart, [StringComparison]::Ordinal)
+if ($telemetryStart -lt 0 -or $telemetryEnd -le $telemetryStart) { throw 'Telemetry writer source boundary was not found.' }
+$telemetryWriterSource = $source.Substring($telemetryStart, $telemetryEnd - $telemetryStart)
+if ($telemetryWriterSource -match 'nvidia-smi|Get-CimInstance|Get-Counter|Get-PowerSnapshot') {
+    throw 'Telemetry history introduced a battery-expensive hardware polling path.'
+}
 $policyStart = $source.IndexOf('function Set-ProfilePolicy', [StringComparison]::Ordinal)
 $policyEnd = $source.IndexOf('function Get-DefaultConfig', $policyStart, [StringComparison]::Ordinal)
 if ($policyStart -lt 0 -or $policyEnd -le $policyStart) { throw 'Profile policy source boundary was not found.' }
@@ -155,10 +206,17 @@ $result = [pscustomobject]@{
     Result = 'PASS'
     AutoPortableBalance = $true
     ManualQuietLocked = $true
+    ManualQuietEcoFixed60 = $true
+    EcoOverridesUnmanagedRefresh = $true
+    EcoOnlyUiName = $true
+    AutoQuietKeepsDynamicRefresh = $true
     HighPowerConnectionRestoresAuto = $true
+    HighPowerColdStartRestoresAuto = $true
+    HighPowerConnectionRestoresAutoRefresh = $true
     ManualDecisionLoggingPaused = $true
     RestartCooldownMinutes = [int]($config.QuietProcessCooldownSeconds / 60)
     TelemetrySchemaVersion = $script:TelemetrySchemaVersion
+    TelemetryAddsHardwarePolling = $false
     OemControlsUntouched = $true
     ChangedSystemSettings = $false
     CompletedAt = (Get-Date).ToString('o')

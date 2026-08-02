@@ -1,8 +1,57 @@
-# OpenSynapse 2.4.2 重新移植验证报告
+# OpenSynapse 2.4.6 Eco 模式与显示策略验证报告
 
-验证日期：2026-07-25
+验证日期：2026-08-02
 分支：`dev-echo`
 参考：`ref/PowerPilot2.4.1`
+
+## 2026-08-02 Eco 模式、280W 恢复与界面命名验证
+
+- 页面、托盘、状态提示、临时模式和应用规则只显示 `Eco` 作为节能模式名称；兼容配置、遥测和回滚数据仍使用内部 `Quiet` 枚举。
+- 手动 Eco 强制内屏固定 60 Hz，并在进入时关闭 HDR/Advanced Color；即使用户此前选择“不管理刷新率”，Eco 仍执行 60 Hz 安全边界。
+- Eco 保持 Ryzen AI 9 365 现有 CPU 65/60/50%、EPP 90/95/100 与 Boost 关闭策略；Smart Auto 决策及决策日志在手动 Eco 中暂停。
+- 电池、PD 或持续 280W 供电不会自行解除手动 Eco；只有新接入并确认的 280W 级适配器会恢复 Auto、内屏 240 Hz 与进入 Eco 前捕获的 HDR 状态。程序冷启动时已确认 280W 执行相同恢复。
+- OEM 异构核心增减阈值、TGP、风扇、EC 与 DeathAdder V3 Pro HID 路径保持不变。
+- PowerShell 定义/运行时回归 22/22 通过；其中 Snipaste 迁移测试仅写入并清理专用 HKCU 临时键，其余测试均不改变系统设置。
+- .NET Core 39/39、Agent 53/53、`dotnet format --verify-no-changes` 与安装器定义检查通过。
+- Dashboard 与 Settings 在 1440×900、96 DPI 下完成实际 WinForms 捕获；所有控件位于父容器边界内，Eco 名称和 CPU/提示/显示按钮文案均完整显示。
+- 当前内屏未激活，`DynamicRefreshSupported=False`；本轮没有改变显示拓扑，动态 60–240 Hz 与 Eco 60 Hz 路径通过原生 API 编译、状态解析和非破坏性策略回归验证。
+- 发布包为 `OpenSynapse-2.4.6.zip`；发布脚本已重新解析 PowerShell 并动态编译原生 C# 辅助代码。
+- 2.4.6 已实际安装到本机：任务 `Running/Highest/Interactive`，运行时 `Healthy/PerMonitorV2`，首个成功心跳存在，78 项电源参数回读通过，开始菜单快捷方式、图标、AppUserModelID 与发布包一致，启动后的 Apply 失败数为 0。
+- 安装时发现旧启动流程只验证 runtime 文件存在，无法拦截托盘卡在 `Starting` 的情况；现已改为等待 `Healthy + LastSuccessfulTickUtc`，重新安装后验证通过。管理员安装态测试同时修复为读取真实安装目录和 v13 配置。
+
+## 2.4.5 历史验证
+
+## 2026-08-02 离电高耗电提示、动态循环与刷新率回退验证
+
+- 离电高耗电检测采用独立的 30 秒原生进程 CPU 增量采样；连续 2 次达到单核 15% 且 10 分钟平均/EMA/即时放电证据不低于 14 W 才提示；
+- 系统进程、PowerShell 与 OpenSynapse 自身默认排除；提示默认冷却 30 分钟，只记录候选名称、CPU、放电和置信度，不调用 `Stop-Process`；AC 接入、禁用开关或锁屏时清除检测状态；
+- 健康主循环在外接供电维持 5 秒；真正离电时，有明显 CPU/GPU/全屏活动采用 10 秒，低负载、锁屏或手动 Quiet 采用 15 秒；故障退避继续独立使用 10/20/40/60 秒；
+- 内屏 `Auto`：Battery/LowPowerPD/UnknownAC 解析为 `DynamicNative`（Windows 60–240 Hz），HighPowerAC 解析为固定 240 Hz；外屏两条路径均保持当前分辨率最大刷新率；
+- 动态刷新率应用或回读验证失败后，独立关闭失败的 DRR 状态并把内屏回退到 Eco 60 Hz；即使外屏最大刷新调用失败，也不会阻断内屏兜底；
+- 手动 Eco 60 Hz/固定 240 Hz：电池→AC 或 PD→已确认 280W 时恢复 `Auto`；AC 状态内普通刷新不会误重置；
+- 自动刷新只在启动、供电变化和显示拓扑修复时执行，不会因 Smart Auto 在 Quiet/Balance/Hyper 间切换而反复改显示链路；HDR、缩放仍需显式应用；
+- GPU 遥测采样映射为 HighPowerAC 5 秒、离电/PD 10 秒、手动 Quiet 20 秒；重复读取同一 GPU 样本不会推进 6 样本 dGPU 活动门槛；
+- GPU 遥测同进程停止/重启及运行中采样周期唤醒回归通过，供电状态切换后无需等待旧周期结束；
+- Chrome 等浏览器全屏轻载 18% CPU/8% GPU 不升 Hyper；达到 50% CPU 并持续 3 个样本后正常升 Hyper；显式应用规则不受影响；
+- PowerShell 定义/运行时自检 22/22 通过，其中 21 项在受限环境直接通过，Snipaste 迁移项仅写入并清理专用 HKCU 临时键后通过；
+- .NET Core 39/39、Agent 53/53、`dotnet format --verify-no-changes`、`git diff --check` 和安装器定义检查通过；
+- 1440×900、96 DPI Settings 截图验证通过，新增高 CPU 提示开关及所有控件均位于父容器边界内；发布包 `OpenSynapse-2.4.5.zip` 已通过 PowerShell 解析和原生 C# 动态编译；
+- 当前内屏仍未激活，未改变显示拓扑，因此本轮只完成原生 API 编译、状态解析与非破坏性能力回读；安装态仍为 2.4.3，2.4.5 尚未覆盖安装。
+
+## 2026-08-01 供电防误判、遥测与刷新率增量验证
+
+- 复现 280W 瞬态序列 `91.86 → 105 → 105 → 105W`：从 Balance/未知档位冷启动时不再进入 `LowPowerPD`；
+- 真实 PD 序列 `78.74 → 76.09 → 79.32W`：30 秒预热后按 3 次、跨度 14 秒确认；
+- 手动 Quiet 不再预置为 PD，单次 `151.62W` 高功率证据仍立即确认并恢复 Auto：通过；
+- telemetry schema 3：适配器限值、原始/稳定供电类型、待确认状态、分类器与应用版本字段：通过；新增字段复用既有快照，无额外硬件轮询；
+- 本机 1000 次遥测写入基准：834 字节/条、1.156ms CPU/条；按 30 秒一次折算约 0.00385% CPU duty、97.7KiB/小时；
+- 刷新率设备映射：当前外屏识别为 `\\.\DISPLAY1` 且运行在 2560×1440 240Hz；固定策略只作用于内屏，外屏取当前分辨率最高刷新率；
+- 当前内屏未激活，无法执行会改变显示拓扑的 60→240Hz 实机回读；历史日志曾在内屏活动时成功应用 `DynamicNative changed=2`，本轮非破坏性检查确认代码路径、Windows 验证 API 与外/内屏映射正常；
+- 内屏未激活时动态刷新改为延迟，不再反复产生失败，提示限制为每 30 分钟一次；
+- 非管理员定义/运行时里程碑测试 21/21、管理员可逆发布测试 24/24、.NET Core 39/39、Agent 52/52：通过；
+- 上一安装态回读：版本 2.4.3、任务 Running/Highest、运行时 Healthy/PerMonitorV2、78 个电源参数、快捷方式和图标均通过，启动后 Apply 失败为 0；该条为 2.4.3 历史安装证据；
+- 安装后 telemetry schema 3 实际落盘回读：`SupplyType=HighPowerAC`、`RawSupplyType=UnknownAC`、`AdapterLimitW=105`，证明稳定分类与原始证据可以同时追踪；
+- 外屏实机策略回归：用内屏 60Hz 策略路径执行后，活动外屏仍由 2560×1440 240Hz 保持为 240Hz，变更计数为 0。
 
 ## 2026-07-27 Quiet 2.4.2 发布与本机安装验证
 
@@ -35,10 +84,10 @@
 ## 自动测试
 
 - PowerShell 文件解析：通过；
-- 非破坏性脚本/定义测试：21/21 通过；
-- 配置迁移：PowerPilot v1–v10、旧 .NET schema 10、中断接管文档均通过；
+- 非破坏性脚本/定义测试：22/22 通过；
+- 配置迁移：PowerPilot 旧配置、旧 .NET schema 10、中断接管文档及当前配置 v13 均通过；
 - Razer HID：4 个白名单 PID、DPI/轮询率报告构造、事务和校验和通过；
-- .NET 历史回归：Core 38/38、Agent 52/52；
+- .NET 历史回归：Core 39/39、Agent 53/53；
 - Release 构建：0 警告、0 错误；
 - `dotnet format --verify-no-changes`：通过；
 - 发布包自检与原生 C# 动态编译：通过。
@@ -66,7 +115,7 @@ PowerPilot 的 21 条应用规则已保留。旧 .NET 状态、配置和 PowerPi
 - Dashboard 与 Settings 所有控件均在父容器边界内；
 - 五页导航、深色控件、自绘标题栏、最小化/最大化/隐藏关闭正常；
 - 标题栏、品牌图标和品牌文字均连接 `BeginDrag`，拖动定义测试通过；
-- Settings 已包含 DeathAdder V3 Pro HID 控制区。
+- Settings 已包含离电高 CPU 提示开关与 DeathAdder V3 Pro HID 控制区。
 
 ## 硬件验证边界
 

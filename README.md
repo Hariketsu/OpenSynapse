@@ -23,7 +23,7 @@ OpenSynapse currently implements the M0–M3 development slice. Implementation d
 
 | Area | Current capability | Maturity |
 | --- | --- | --- |
-| Windows policies | Adapter-aware Auto, Hyper, Balance, and Quiet selection; power plans; refresh rate; Advanced Color/HDR; internal brightness; display scaling; optional wake-device control | Live installation validated on the target RZ09-0528 |
+| Windows policies | Adapter-aware Auto, Hyper, Balance, and Eco selection; power plans; refresh rate; Advanced Color/HDR; internal brightness; display scaling; optional wake-device control | Live installation validated on the target RZ09-0528 |
 | State restoration | Atomic captured state, legacy .NET rollback, PowerPilot takeover, and verified power-plan rollback | Migration validated on the target system |
 | Desktop control | Single elevated PowerShell 5.1/WinForms tray process, installed as a delayed highest-privilege per-user task | Installed and live-validated |
 | Razer mouse | Discovery, status, DPI, and standard-receiver polling control | Experimental |
@@ -79,7 +79,7 @@ powershell -ExecutionPolicy Bypass -File scripts\Publish-OpenSynapse.ps1
 powershell -ExecutionPolicy Bypass -File scripts\Install-OpenSynapse.ps1
 ```
 
-The package is written to `artifacts\publish\OpenSynapse` and `artifacts\OpenSynapse-2.4.2.zip`. The installer first asks the obsolete .NET Agent to restore its captured state when that binary is available; otherwise it restores the legacy power, display, brightness and wake state directly. If an installed PowerPilot runtime exists, its configuration and recovery state are archived, its own verified uninstaller restores Windows, and that configuration is promoted to OpenSynapse. The installer then removes the obsolete split runtime, copies the PowerShell implementation under `%ProgramFiles%\OpenSynapse`, registers one delayed highest-privilege per-user task, and creates an OpenSynapse Start menu shortcut. To uninstall and restore the captured state:
+The package is written to `artifacts\publish\OpenSynapse` and `artifacts\OpenSynapse-2.4.6.zip`. The installer first asks the obsolete .NET Agent to restore its captured state when that binary is available; otherwise it restores the legacy power, display, brightness and wake state directly. If an installed PowerPilot runtime exists, its configuration and recovery state are archived, its own verified uninstaller restores Windows, and that configuration is promoted to OpenSynapse. The installer then removes the obsolete split runtime, copies the PowerShell implementation under `%ProgramFiles%\OpenSynapse`, registers one delayed highest-privilege per-user task, and creates an OpenSynapse Start menu shortcut. To uninstall and restore the captured state:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\Uninstall-OpenSynapse.ps1
@@ -98,9 +98,11 @@ The mouse option requires a readable DeathAdder V3 Pro and writes its currently 
 
 ## Configuration
 
-The tray runtime stores policy in `%LOCALAPPDATA%\OpenSynapse\config.json` and rollback state in `state.json`. It retains PowerPilot 2.4.1's Smart Auto, application rules, supply debounce, display policy, battery telemetry, health backoff, and reversible state model.
+The tray runtime stores policy in `%LOCALAPPDATA%\OpenSynapse\config.json` and rollback state in `state.json`. It retains PowerPilot 2.4.1's Smart Auto, application rules, supply debounce, display policy, battery telemetry, health backoff, and reversible state model. Adapter classification treats only readings at or below 85 W as strong PD evidence and requires a 30-second startup warm-up plus three spaced samples before a downgrade; one reading at or above 130 W still confirms high-power AC immediately. GPU sampling adapts to 5 seconds on verified high-power AC, 10 seconds on portable power, and 20 seconds in manual Eco; only unique timestamped GPU samples advance dGPU activity detection. The main policy loop remains at 5 seconds on external power and expands to 10 seconds under battery activity or 15 seconds while battery load is light/manual Eco. A separate 30-second process CPU delta sampler can notify about sustained high-drain applications only when battery discharge is at least 14 W; it never closes a process and rate-limits alerts for 30 minutes.
 
-The PowerPilot-compatible defaults enable Quiet maintenance. Wake devices are matched by configured name fragments (initially MediaTek Wi-Fi, HID-compliant mouse, and USB4); tracked permissions are restored when leaving Quiet, exiting, or uninstalling. Quiet may also close configured high-drain helper processes and pause configured Armoury Crate/ASUS services. Review these lists in `config.json` if those applications or devices must remain active.
+Display policy keeps every active external display at the highest refresh rate exposed for its current resolution and color depth. The internal-panel `Auto` policy uses native 60–240 Hz dynamic refresh on battery, USB-C PD, and unverified AC, then returns to fixed 240 Hz after high-power AC is verified. Manual Eco 60 Hz and fixed 240 Hz remain available and return to `Auto` when external power is newly connected. When the internal panel is inactive, dynamic refresh is deferred without repeatedly producing monitor errors. If Windows accepts neither the dynamic request nor its verification, OpenSynapse falls back to internal Eco 60 Hz while keeping external displays at their maximum refresh rate.
+
+The PowerPilot-compatible defaults enable Eco maintenance. Wake devices are matched by configured name fragments (initially MediaTek Wi-Fi, HID-compliant mouse, and USB4); tracked permissions are restored when leaving Eco, exiting, or uninstalling. Eco may also close configured high-drain helper processes and pause configured Armoury Crate/ASUS services. The compatible internal configuration value remains `Quiet`. Review these lists in `config.json` if those applications or devices must remain active.
 
 ## Safety and privacy
 
@@ -109,9 +111,9 @@ The PowerPilot-compatible defaults enable Quiet maintenance. Wake devices are ma
 - Responses must match the request transaction, command class, command ID, and checksum.
 - The installed runtime runs as a single per-user highest-privilege scheduled task; no named-pipe IPC is required.
 - Configuration and captured system state are stored separately and atomically under `%LOCALAPPDATA%\OpenSynapse`.
-- Quiet wake-device and service changes retain rollback state; configured process termination is limited to the local allowlists inherited from PowerPilot.
-- Runtime events are written locally to bounded `OpenSynapse.log` and `telemetry.jsonl` files.
-- Adapter classification invokes `nvidia-smi` with a read-only query and fails safe to Quiet when the power limit cannot be verified.
+- Eco wake-device and service changes retain rollback state; configured process termination is limited to the local allowlists inherited from PowerPilot.
+- Runtime events are written locally to bounded `OpenSynapse.log` and schema-5 `telemetry.jsonl` files. Process evidence is sampled at a separate 30-second cadence without another sensor or GPU query; only names, CPU deltas, working set, confidence and alert state are stored locally.
+- Adapter classification invokes `nvidia-smi` with a read-only query. Ambiguous readings retain the last trusted AC class; an untrusted cold start remains `UnknownAC` and never promotes itself to high-power mode.
 - The current implementation contains no telemetry, analytics, updater, account system, or runtime network client.
 
 Please report security issues through the private process in [SECURITY.md](SECURITY.md), not a public issue.

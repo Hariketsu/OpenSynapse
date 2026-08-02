@@ -1,27 +1,29 @@
-# OpenSynapse 2.4.2
+# OpenSynapse 2.4.6
 
 OpenSynapse 是基于 PowerPilot 2.4.1 重新移植的 Windows 电源、显示与 Razer HID 控制程序。发布版保留原型已验证的单进程 PowerShell 5.1/WinForms 架构，并将产品名、任务、目录、快捷方式和 AppUserModelID 全部更名为 OpenSynapse。
 
 ## 功能
 
-- Auto、Hyper、Balance、Quiet 电源模式；
+- Auto、Hyper、Balance、Eco 电源模式（兼容配置内部仍使用 `Quiet` 枚举）；
 - 280W 高功率 AC、USB-C PD、电池和未知 AC 分类；
 - CPU/GPU、前台/全屏应用、应用规则与迟滞驱动的 Smart Auto；
-- 临时模式、Quiet 后台维护与唤醒设备管理；
-- HDR、亮度、显示缩放和刷新率策略；
-- 电池、GPU、dGPU 活动、运行健康与诊断导出；
+- 临时模式、Eco 后台维护与唤醒设备管理；
+- HDR、亮度、显示缩放和供电感知内屏 Auto 刷新率（离电/PD 动态 60–240 Hz、280W 固定 240 Hz、手动 Eco 60 Hz/固定 240 Hz）；
+- 电池、GPU、dGPU 活动、离电高耗电进程提示、运行健康与诊断导出；
 - 五页深色 UI、自绘可拖动标题栏、托盘与开始菜单快捷方式；
 - DeathAdder V3 Pro 状态、DPI 与标准接收器轮询率控制。
 
 OpenSynapse 只使用公开 Windows 接口和标准 HID feature report。它不写 Razer EC，不控制风扇、TGP 或 MUX，也不安装或替换内核驱动。
 
-## 离电 Quiet 策略
+## 离电 Eco 策略
 
-Smart Auto 在电池或 USB-C PD 下以 Quiet 为低负载基线，电量不低于 Balance 安全阈值且应用、CPU 或 GPU 负载持续满足条件时可以临时升到 Balance。手动选择 Quiet 后，Quiet 是强制档位，不会被自动决策切换到 Balance；当运行时确认 280W 级适配器刚接入时，手动 Quiet 锁定会解除并恢复 Auto。已经连接 280W 适配器时再次手动选择 Quiet，仍会保持手动锁定，直到下一次实际适配器接入事件。
+Smart Auto 在电池或 USB-C PD 下以 Eco 为低负载基线，电量不低于 Balance 安全阈值且应用、CPU 或 GPU 负载持续满足条件时可以临时升到 Balance。手动选择 Eco 后，Eco 是强制档位，不会被自动决策切换到 Balance；内屏固定 60 Hz、HDR/Advanced Color 关闭。当运行时确认 280W 级适配器刚接入时，Eco 锁定会解除并恢复 Auto 与内屏 240 Hz。已经连接 280W 适配器时再次手动选择 Eco，仍会保持手动锁定，直到下一次实际适配器接入事件。
 
-Ryzen AI 9 365 的 Quiet DC 曲线会同步应用到第 0/1/2 类处理器：电量不低于 70% 时最大状态 65%、EPP 90；30–69% 时为 60%、EPP 95；低于 30% 时为 50%、EPP 100。长、短线程均优先高效核心。该策略不修改 OEM 异构核心增减阈值、TGP、风扇或 EC。
+Ryzen AI 9 365 的 Eco DC 曲线会同步应用到第 0/1/2 类处理器：电量不低于 70% 时最大状态 65%、EPP 90；30–69% 时为 60%、EPP 95；低于 30% 时为 50%、EPP 100。Boost 保持关闭，长、短线程均优先高效核心。该策略不修改 OEM 异构核心增减阈值、TGP、风扇或 EC。
 
-Quiet 关闭 NVIDIA Overlay 等高耗电辅助进程后，如果检测到它在 10 分钟内自动重启，OpenSynapse 会停止反复结束该进程，进入 30 分钟冷却并显示托盘提示。若希望它持续关闭，应在对应软件中禁用 Overlay 自动启动。
+Eco 关闭 NVIDIA Overlay 等高耗电辅助进程后，如果检测到它在 10 分钟内自动重启，OpenSynapse 会停止反复结束该进程，进入 30 分钟冷却并显示托盘提示。若希望它持续关闭，应在对应软件中禁用 Overlay 自动启动。
+
+离电主循环按负载动态使用 10 或 15 秒，外接供电保持 5 秒。独立的 30 秒进程 CPU 增量采样需要连续 2 次达到单核 15% 且平均放电不低于 14 W 才提示，提示冷却 30 分钟；此路径只提供证据，不会结束任何进程。
 
 ## 安装
 
@@ -71,6 +73,8 @@ powershell -ExecutionPolicy Bypass -File .\OpenSynapse.ps1 -Mode Open
 
 配置和状态采用原子替换并保留备份。旧 .NET schema-10 文件和 PowerPilot 接管记录会以独立迁移文件归档，避免被新运行时误读。
 
-遥测历史 schema 2 包含实际档位 `ActiveProfile`、剩余容量 `BatteryRemainingMwh`、电池电压 `BatteryVoltageMv` 和平滑续航估算 `EstimatedHours`。
+遥测历史 schema 5 包含实际档位 `ActiveProfile`、剩余容量 `BatteryRemainingMwh`、电池电压 `BatteryVoltageMv`、平滑续航估算 `EstimatedHours`，以及 `AdapterLimitW`、`RawSupplyType`、`SupplyConfirmationPending`、分类器/应用版本、刷新策略、GPU 样本序号/年龄、主循环周期和离电高耗电进程证据。新增字段不增加硬件或 GPU 轮询。
+
+供电分类只有在读数不高于 85 W 时才视为强 PD 证据，并从任意启动档位统一经过 30 秒预热和三次间隔采样；一次不低于 130 W 的读数仍会立即确认 280W 级适配器。外屏默认保持当前分辨率支持的最高刷新率；内屏 Auto 在离电/PD/未确认 AC 使用原生 60–240 Hz 动态刷新，确认 280W 后固定 240 Hz。手动固定 60/240 Hz 在新接入外部供电时恢复 Auto；动态刷新应用或回读验证失败时，内屏安全回退到 Eco 60 Hz。
 
 详见 `TEST-REPORT.md`。

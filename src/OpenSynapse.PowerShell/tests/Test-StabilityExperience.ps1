@@ -14,9 +14,13 @@ trap {
 $mainScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'OpenSynapse.ps1'
 . $mainScript -Mode SelfTest
 $mainSource = Get-Content -Raw -LiteralPath $mainScript
+$productionDataDir = Join-Path $env:LOCALAPPDATA 'OpenSynapse'
+if ([string]::Equals([IO.Path]::GetFullPath($script:DataDir), [IO.Path]::GetFullPath($productionDataDir), [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'SelfTest mode still targets the production OpenSynapse data directory.'
+}
 
 foreach ($required in @(
-    "`$script:AppVersion = '2.4.2'",
+    "`$script:AppVersion = '2.4.6'",
     '[IO.File]::Replace($temporaryPath, $Path, $backupPath, $true)',
     'Recovered JSON from backup',
     '$script:ApplyInProgress',
@@ -71,6 +75,7 @@ $result = [pscustomobject]@{
     RuntimeHeartbeat = $true
     DisplayRepairRetry = $true
     ExistingInstanceWake = $true
+    SelfTestDataIsolated = $true
     ChangedSystemSettings = $false
     CompletedAt = (Get-Date).ToString('o')
 }

@@ -14,13 +14,17 @@ trap {
 $mainScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'OpenSynapse.ps1'
 . $mainScript -Mode SelfTest
 $config = Get-DefaultConfig
-if ($config.Version -ne 11 -or $config.SmartGpuEnter -ne 20 -or -not $config.SmartFullscreenEnabled -or
+if ($config.Version -ne 13 -or $config.SmartGpuEnter -ne 20 -or -not $config.SmartFullscreenEnabled -or
     @($config.ApplicationRules).Count -lt 15 -or $config.DgpuLeakMinimumSamples -ne 6) {
     throw 'Safe telemetry defaults are incomplete.'
 }
 
 $nativeMethods = [OpenSynapseNative.AutomationTelemetry].GetMethods().Name
 if ('GetForegroundWindowSample' -notin $nativeMethods) { throw 'Native fullscreen telemetry is missing.' }
+$gpuMethods = [OpenSynapseNative.GpuTelemetry].GetMethods().Name
+foreach ($method in @('SetInterval', 'GetInterval')) {
+    if ($method -notin $gpuMethods) { throw "Adaptive GPU telemetry method is missing: $method" }
+}
 $battery = [OpenSynapseNative.BatteryTelemetry]::Read()
 if ($battery.Available -and ($battery.BatteryCount -lt 1 -or $battery.RemainingCapacityMwh -le 0 -or $battery.VoltageMv -le 0)) {
     throw "Battery Class API did not return a valid local battery sample: $($battery.Error)"
@@ -46,6 +50,36 @@ try {
         throw "Windows GPU telemetry returned an invalid sample: $($gpu.Error)"
     }
     if ($stopwatch.ElapsedMilliseconds -gt 50) { throw "Cached GPU telemetry blocked for $($stopwatch.ElapsedMilliseconds) ms." }
+}
+finally { [OpenSynapseNative.GpuTelemetry]::Stop() }
+
+# The background sampler must survive an in-process stop/start cycle, and a
+# cadence change must wake the worker instead of waiting for the old interval.
+$previousSequence = [long]$gpu.Sequence
+$gpuWorkerRestarted = $false
+$gpuCadenceWakeApplied = $false
+[OpenSynapseNative.GpuTelemetry]::Start(20000)
+try {
+    foreach ($attempt in 1..12) {
+        Start-Sleep -Milliseconds 250
+        $restartSample = [OpenSynapseNative.GpuTelemetry]::ReadLatest()
+        if ([long]$restartSample.Sequence -gt $previousSequence) {
+            $gpuWorkerRestarted = $true
+            break
+        }
+    }
+    if (-not $gpuWorkerRestarted) { throw 'GPU telemetry did not restart in the same process.' }
+    $restartSequence = [long]$restartSample.Sequence
+    [OpenSynapseNative.GpuTelemetry]::SetInterval(2000)
+    foreach ($attempt in 1..12) {
+        Start-Sleep -Milliseconds 250
+        $cadenceSample = [OpenSynapseNative.GpuTelemetry]::ReadLatest()
+        if ([long]$cadenceSample.Sequence -gt $restartSequence) {
+            $gpuCadenceWakeApplied = $true
+            break
+        }
+    }
+    if (-not $gpuCadenceWakeApplied) { throw 'GPU telemetry cadence change did not wake the worker.' }
 }
 finally { [OpenSynapseNative.GpuTelemetry]::Stop() }
 
@@ -75,6 +109,27 @@ $fullscreenState.CandidateProfile = $first.CandidateProfile
 $fullscreenState.CandidateSamples = $first.CandidateSamples
 $second = Resolve-SmartAutomationDecision $config $high $fullscreenState 18 unknown-game $start.AddSeconds(5) 2 $true @()
 if ($first.Profile -ne 'Balance' -or $second.Profile -ne 'Hyper') { throw 'Fullscreen app recognition did not use app hysteresis.' }
+
+# Browser maximization/video fullscreen is common and must not promote to Hyper
+# on light UI/video-decode load. A genuine sustained browser workload uses its
+# own higher threshold and three-sample confirmation.
+$browserState = New-SmartAutomationState Balance
+$browserState.LastSupplyType = 'HighPowerAC'
+$browserState.LastTransitionAt = $start.AddMinutes(-5)
+foreach ($sample in 1..4) {
+    $browserLight = Resolve-SmartAutomationDecision $config $high $browserState 18 chrome $start.AddSeconds($sample * 5) 8 $true @()
+    $browserState.CurrentProfile = $browserLight.Profile
+    $browserState.CandidateProfile = $browserLight.CandidateProfile
+    $browserState.CandidateSamples = $browserLight.CandidateSamples
+}
+if ($browserLight.Profile -ne 'Balance') { throw 'Light fullscreen browser activity promoted to Hyper.' }
+foreach ($sample in 1..$config.SmartBrowserFullscreenSamples) {
+    $browserHeavy = Resolve-SmartAutomationDecision $config $high $browserState 50 chrome $start.AddSeconds(30 + ($sample * 5)) 8 $true @()
+    $browserState.CurrentProfile = $browserHeavy.Profile
+    $browserState.CandidateProfile = $browserHeavy.CandidateProfile
+    $browserState.CandidateSamples = $browserHeavy.CandidateSamples
+}
+if ($browserHeavy.Profile -ne 'Hyper') { throw 'Sustained heavy fullscreen browser activity did not promote after its dedicated hysteresis.' }
 
 # A user-defined Running rule recognizes a background renderer with no foreground match.
 $config.ApplicationRules = @([pscustomobject]@{ ProcessName = 'background-renderer'; Profile = 'Hyper'; Scope = 'Running'; Enabled = $true })
@@ -108,11 +163,28 @@ $telemetry = [pscustomobject]@{
     CpuPercent = 2.0; ForegroundProcess = 'explorer'; ForegroundFullscreen = $false; RunningProcesses = @()
     GpuAvailable = $true; GpuPercent = 0.5; DgpuPercent = 1.5; DgpuDedicatedMb = 256.0
     DgpuConsumers = @([pscustomobject]@{ ProcessName = 'leaky-app'; Discrete = $true; UtilizationPercent = 1.5; DedicatedBytes = 256MB })
+    GpuSampleSequence = 0L; GpuSampledAtUtcTicks = 0L; GpuSampleAgeSeconds = 0.0
 }
 foreach ($sample in 1..$config.DgpuLeakMinimumSamples) {
+    $telemetry.GpuSampleSequence = [long]$sample
+    $telemetry.GpuSampledAtUtcTicks = $start.AddSeconds($sample * 10).ToUniversalTime().Ticks
     $null = Update-SmartAutomationState $config $portable $leakState $telemetry $start.AddSeconds($sample * 5)
 }
 if (-not $leakState.DgpuLeakDetected -or @($leakState.DgpuConsumers).Count -ne 1) { throw 'Consecutive dGPU leakage detection failed.' }
+$staleState = New-SmartAutomationState Quiet
+$telemetry.GpuSampleSequence = 99L
+foreach ($repeat in 1..$config.DgpuLeakMinimumSamples) {
+    $null = Update-DgpuActivityState $config $portable $staleState $telemetry
+}
+if ($staleState.DgpuLeakSamples -ne 1 -or $staleState.DgpuLeakDetected) {
+    throw 'A cached GPU sample was counted repeatedly as sustained dGPU activity.'
+}
+
+if ((Resolve-GpuTelemetryIntervalMilliseconds $config $high Auto) -ne 5000 -or
+    (Resolve-GpuTelemetryIntervalMilliseconds $config $portable Auto) -ne 10000 -or
+    (Resolve-GpuTelemetryIntervalMilliseconds $config $portable Quiet) -ne 20000) {
+    throw 'Adaptive GPU telemetry cadence mapping failed.'
+}
 
 $source = Get-Content -Raw -LiteralPath $mainScript
 $smartStart = $source.IndexOf('function Get-SmartAutomationTelemetry', [StringComparison]::Ordinal)
@@ -155,16 +227,21 @@ finally { Remove-Item -LiteralPath $exportRoot -Recurse -Force -ErrorAction Sile
 
 $result = [pscustomobject]@{
     Result = 'PASS'
-    ConfigVersion = 11
+    ConfigVersion = 13
     BatteryClassApi = [bool]$battery.Available
     BatteryCount = $battery.BatteryCount
     GpuTelemetryStartupSeconds = $gpuStartupAttempts
     GpuTelemetryCachedReadMs = $stopwatch.ElapsedMilliseconds
     FullscreenRecognition = $true
+    BrowserFullscreenGuard = $true
     BackgroundGpuRecognition = $true
     RunningApplicationRules = $true
     PortableHyperCeiling = $true
     DgpuLeakSamples = $config.DgpuLeakMinimumSamples
+    CachedGpuSamplesIgnored = $true
+    AdaptiveGpuCadenceSeconds = @(5, 10, 20)
+    GpuWorkerRestarted = $gpuWorkerRestarted
+    GpuCadenceWakeApplied = $gpuCadenceWakeApplied
     DiagnosticExport = $true
     VendorControlInSmartLoop = $false
     ChangedSystemSettings = $false

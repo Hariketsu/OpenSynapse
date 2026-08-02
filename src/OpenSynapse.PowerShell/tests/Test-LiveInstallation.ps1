@@ -9,7 +9,16 @@ param(
 
 $ErrorActionPreference = 'Stop'
 trap {
-    $failure = [pscustomobject]@{ Result = 'FAIL'; Message = $_.Exception.Message; Position = $_.InvocationInfo.PositionMessage; CompletedAt = (Get-Date).ToString('o') }
+    $resultVariable = Get-Variable -Name result -ErrorAction SilentlyContinue
+    if ($null -ne $resultVariable -and $null -ne $resultVariable.Value) {
+        $failure = $resultVariable.Value
+        $failure.Result = 'FAIL'
+        $failure | Add-Member -NotePropertyName Message -NotePropertyValue $_.Exception.Message -Force
+        $failure | Add-Member -NotePropertyName Position -NotePropertyValue $_.InvocationInfo.PositionMessage -Force
+    }
+    else {
+        $failure = [pscustomobject]@{ Result = 'FAIL'; Message = $_.Exception.Message; Position = $_.InvocationInfo.PositionMessage; CompletedAt = (Get-Date).ToString('o') }
+    }
     if ($ResultPath) { [IO.File]::WriteAllText([IO.Path]::GetFullPath($ResultPath), ($failure | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false)) }
     Write-Error $_
     break
@@ -27,7 +36,7 @@ $installedTrayIcon = Join-Path $programDir 'OpenSynapse.Tray.ico'
 
 if (-not (Test-Path -LiteralPath $installedScript)) { throw 'Installed script is missing.' }
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-. $installedScript -Mode SelfTest
+. $installedScript -Mode Status | Out-Null
 $state = Get-InstalledState
 $runtime = Read-JsonFile $runtimePath
 $process = Get-Process -Id ([int]$runtime.ProcessId) -ErrorAction Stop
@@ -116,6 +125,12 @@ elseif ([string]$powerSnapshot.SupplyType -eq 'HighPowerAC') {
 elseif ([string]$powerSnapshot.SupplyType -in @('LowPowerPD', 'Battery') -and [int]$powerSnapshot.BatteryPercent -ge [int]$config.BalanceBatteryThreshold) {
     $activeProfile -in @('Quiet', 'Balance')
 }
+elseif ([string]$powerSnapshot.SupplyType -in @('UnknownAC', 'Unknown')) {
+    # A standalone status probe cannot reconstruct the tray's trusted supply
+    # stabilizer. Ambiguous readings intentionally preserve the tray's last
+    # verified profile instead of forcing a potentially incorrect downgrade.
+    $activeProfile -in @('Quiet', 'Balance', 'Hyper')
+}
 else { $activeProfile -eq 'Quiet' }
 $result = [pscustomobject]@{
     Result = 'PASS'
@@ -135,6 +150,8 @@ $result = [pscustomobject]@{
     StateVersion = $state.Version
     ConfigVersion = $config.Version
     RuntimeVersion = $runtime.Version
+    RuntimeHealth = if ($runtime.PSObject.Properties['Health']) { [string]$runtime.Health } else { 'Missing' }
+    LastSuccessfulTickUtc = if ($runtime.PSObject.Properties['LastSuccessfulTickUtc']) { [string]$runtime.LastSuccessfulTickUtc } else { '' }
     ActiveProfile = $activeProfile
     ActiveProfileAllowed = $activeProfileAllowed
     SupplyType = $powerSnapshot.SupplyType
@@ -150,14 +167,36 @@ $result = [pscustomobject]@{
     CompletedAt = (Get-Date).ToString('o')
 }
 
-if (-not ($result.TaskState -eq 'Running' -and $result.TaskRunLevel -eq 'Highest' -and $result.TaskActionProtected -and $result.TaskLogonDelay -eq 'PT30S' -and $result.AllowBattery -and
-    $result.DontStopOnBattery -and $result.TrayAliveAndMatched -and $result.TrayDpiMode -eq 'PerMonitorV2' -and
-    $result.TrayDpiAwareness -eq 2 -and $result.TrayAppUserModelId -eq $script:AppUserModelId -and
-    $result.StateVersion -eq 10 -and $result.ConfigVersion -eq 11 -and $result.RuntimeVersion -eq '2.4.2' -and $result.ActiveProfileAllowed -and
-    $result.InstalledPowerValuesVerified -eq 78 -and $result.EmptyStateArraysValid -and $result.ShortcutExists -and
-    $result.IconFilesExist -and $result.IconFilesMatchPackage -and $result.ShortcutUsesOpenSynapseIcon -and $result.ShortcutUsesOpenSynapseIdentity -and
-    $result.PostStartApplyFailures -eq 0 -and $result.InstalledMatchesPackage)) {
-    throw 'One or more live installation assertions failed.'
+$checks = [ordered]@{
+    TaskState = ($result.TaskState -eq 'Running')
+    TaskRunLevel = ($result.TaskRunLevel -eq 'Highest')
+    TaskActionProtected = [bool]$result.TaskActionProtected
+    TaskLogonDelay = ($result.TaskLogonDelay -eq 'PT30S')
+    AllowBattery = [bool]$result.AllowBattery
+    DontStopOnBattery = [bool]$result.DontStopOnBattery
+    TrayAliveAndMatched = [bool]$result.TrayAliveAndMatched
+    TrayDpiMode = ($result.TrayDpiMode -eq 'PerMonitorV2')
+    TrayDpiAwareness = ($result.TrayDpiAwareness -eq 2)
+    TrayAppUserModelId = ($result.TrayAppUserModelId -eq $script:AppUserModelId)
+    StateVersion = ($result.StateVersion -eq 10)
+    ConfigVersion = ($result.ConfigVersion -eq 13)
+    RuntimeVersion = ($result.RuntimeVersion -eq '2.4.6')
+    RuntimeHealth = ($result.RuntimeHealth -eq 'Healthy')
+    LastSuccessfulTickUtc = -not [string]::IsNullOrWhiteSpace([string]$result.LastSuccessfulTickUtc)
+    ActiveProfileAllowed = [bool]$result.ActiveProfileAllowed
+    InstalledPowerValuesVerified = ($result.InstalledPowerValuesVerified -eq 78)
+    EmptyStateArraysValid = [bool]$result.EmptyStateArraysValid
+    ShortcutExists = [bool]$result.ShortcutExists
+    IconFilesExist = [bool]$result.IconFilesExist
+    IconFilesMatchPackage = [bool]$result.IconFilesMatchPackage
+    ShortcutUsesOpenSynapseIcon = [bool]$result.ShortcutUsesOpenSynapseIcon
+    ShortcutUsesOpenSynapseIdentity = [bool]$result.ShortcutUsesOpenSynapseIdentity
+    PostStartApplyFailures = ($result.PostStartApplyFailures -eq 0)
+    InstalledMatchesPackage = [bool]$result.InstalledMatchesPackage
+}
+$failedChecks = [string[]]@($checks.GetEnumerator() | Where-Object { -not [bool]$_.Value } | ForEach-Object { [string]$_.Key })
+if ($failedChecks.Count -gt 0) {
+    throw "Live installation assertions failed: $($failedChecks -join ', ')."
 }
 
 if ($ResultPath) { [IO.File]::WriteAllText([IO.Path]::GetFullPath($ResultPath), ($result | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false)) }

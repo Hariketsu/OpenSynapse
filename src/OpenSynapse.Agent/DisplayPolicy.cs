@@ -81,7 +81,7 @@ internal sealed class DisplayPolicy
         {
             RestoreCapturedDisplayState(state, clearCompleted: false, restoreScales: false);
         }
-        ApplyRefreshPolicy(mode, config);
+        ApplyRefreshPolicy(mode, config, powerSnapshot);
 
         if (config.ManageDisplayScaling)
         {
@@ -170,10 +170,16 @@ internal sealed class DisplayPolicy
         }
     }
 
-    private void ApplyRefreshPolicy(OperatingMode mode, OpenSynapseConfig config)
+    private void ApplyRefreshPolicy(OperatingMode mode, OpenSynapseConfig config, PowerSnapshot? powerSnapshot)
     {
         switch (config.RefreshPolicy)
         {
+            case RefreshPolicy.Auto when powerSnapshot?.SupplyType == SupplyType.HighPowerAc:
+                displaySystem.ApplyFixedRefresh(240);
+                break;
+            case RefreshPolicy.Auto:
+                displaySystem.ApplyDynamicNativeRefresh();
+                break;
             case RefreshPolicy.Unmanaged:
                 displaySystem.RestoreRefresh();
                 break;

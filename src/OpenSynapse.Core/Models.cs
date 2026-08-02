@@ -40,6 +40,7 @@ public enum RuntimeHealth
 
 public enum RefreshPolicy
 {
+    Auto,
     FollowMode,
     Unmanaged,
     Maximum,
@@ -130,7 +131,7 @@ public sealed record PowerSnapshot(
 public static class SupplyClassifier
 {
     public const double HighPowerAdapterThresholdWatts = 130;
-    public const double LowPowerAdapterThresholdWatts = 100;
+    public const double LowPowerAdapterThresholdWatts = 85;
 
     public static SupplyType Resolve(PowerSource source, double? adapterLimitWatts) => source switch
     {

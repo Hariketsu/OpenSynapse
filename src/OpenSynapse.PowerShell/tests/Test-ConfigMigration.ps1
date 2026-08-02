@@ -39,10 +39,10 @@ try {
     $v1Config = [pscustomobject]@{ Selection = 'Auto'; CloseHighDrainAppsInQuiet = $true; QuietProcessNames = @('HWiNFO64') }
     Write-JsonFile $script:ConfigPath $v1Config
     $migratedConfig = Get-AppConfig
-    if ($migratedConfig.Version -ne 11 -or $migratedConfig.InternalScale -ne 150 -or $migratedConfig.ExternalScale -ne 125) { throw 'v1 config migration failed.' }
+    if ($migratedConfig.Version -ne 13 -or $migratedConfig.InternalScale -ne 150 -or $migratedConfig.ExternalScale -ne 125) { throw 'v1 config migration failed.' }
     if (-not $migratedConfig.ManageWakeDevices -or -not $migratedConfig.ManageRefreshRate) { throw 'v2 config defaults were not added.' }
     if ('ArmourySocketServer' -notin @($migratedConfig.QuietProcessNames)) { throw 'The v2 process list was not merged into the legacy config.' }
-    if ($migratedConfig.RefreshPolicy -ne 'FollowProfile' -or $migratedConfig.BalanceBrightness -ne 60 -or $migratedConfig.BalanceBatteryThreshold -ne 50) {
+    if ($migratedConfig.RefreshPolicy -ne 'Auto' -or $migratedConfig.BalanceBrightness -ne 60 -or $migratedConfig.BalanceBatteryThreshold -ne 50) {
         throw 'v3 config defaults were not added.'
     }
     if (-not $migratedConfig.SeamlessModeSwitching) { throw 'v4 seamless mode switching default was not added.' }
@@ -66,6 +66,17 @@ try {
         'LockApp' -notin @($migratedConfig.SmartIgnoredFullscreenProcesses) -or
         $migratedConfig.DgpuActivityDischargeThresholdW -ne 8) {
         throw 'v10 fullscreen guard and correlated dGPU activity defaults were not added.'
+    }
+    if ($migratedConfig.SmartBrowserFullscreenCpuFloor -ne 45 -or $migratedConfig.SmartBrowserFullscreenGpuFloor -ne 20 -or
+        $migratedConfig.SmartBrowserFullscreenSamples -ne 3 -or $migratedConfig.GpuTelemetryPortableIntervalSeconds -ne 10 -or
+        $migratedConfig.GpuTelemetryManualQuietIntervalSeconds -ne 20) {
+        throw 'v12 browser guard or adaptive GPU telemetry defaults were not added.'
+    }
+    if (-not $migratedConfig.BatteryHighDrainAlertsEnabled -or $migratedConfig.BatteryHighDrainSampleSeconds -ne 30 -or
+        $migratedConfig.BatteryHighDrainCpuPercent -ne 15 -or $migratedConfig.BatteryHighDrainMinimumSamples -ne 2 -or
+        $migratedConfig.BatteryHighDrainMinimumDischargeW -ne 14 -or $migratedConfig.BatteryHighDrainCooldownMinutes -ne 30 -or
+        'System' -notin @($migratedConfig.BatteryHighDrainIgnoredProcesses)) {
+        throw 'v13 battery high-drain alert defaults were not added.'
     }
 
     $legacyDotNetConfig = [pscustomobject][ordered]@{
@@ -98,10 +109,10 @@ try {
     }
     Write-JsonFile $script:ConfigPath $legacyDotNetConfig
     $dotNetMigratedConfig = Get-AppConfig
-    if (-not $script:LegacyDotNetConfigDetected -or $dotNetMigratedConfig.Version -ne 11 -or
+    if (-not $script:LegacyDotNetConfigDetected -or $dotNetMigratedConfig.Version -ne 13 -or
         $dotNetMigratedConfig.Selection -ne 'Hyper' -or $dotNetMigratedConfig.BalanceBatteryThreshold -ne 57 -or
         $dotNetMigratedConfig.ManageAdvancedColor -or $dotNetMigratedConfig.ManageBrightness -or
-        $dotNetMigratedConfig.DisplayScalingEnabled -or $dotNetMigratedConfig.RefreshPolicy -ne 'Fixed120' -or
+        $dotNetMigratedConfig.DisplayScalingEnabled -or $dotNetMigratedConfig.RefreshPolicy -ne 'Auto' -or
         $dotNetMigratedConfig.InternalScale -ne 175 -or $dotNetMigratedConfig.ExternalScale -ne 150 -or
         $dotNetMigratedConfig.BalanceBrightness -ne 65 -or $dotNetMigratedConfig.QuietBrightness -ne 35 -or
         -not $dotNetMigratedConfig.ManageWakeDevices -or 'Test wake device' -notin @($dotNetMigratedConfig.QuietWakeDevicePatterns) -or
@@ -118,7 +129,7 @@ try {
 
     Write-JsonFile $script:ConfigPath @('PowerPilot uninstaller output', $migratedConfig)
     $interruptedTakeoverConfig = Get-AppConfig
-    if ($interruptedTakeoverConfig.Version -ne 11 -or $interruptedTakeoverConfig.Selection -ne 'Auto' -or
+    if ($interruptedTakeoverConfig.Version -ne 13 -or $interruptedTakeoverConfig.Selection -ne 'Auto' -or
         @($interruptedTakeoverConfig.ApplicationRules).Count -lt 15) {
         throw 'Interrupted PowerPilot takeover configuration recovery failed.'
     }
@@ -132,7 +143,7 @@ try {
     $v10QuietConfig.QuietCpuLowThreshold = 20
     Write-JsonFile $script:ConfigPath $v10QuietConfig
     $v11QuietConfig = Get-AppConfig
-    if ($v11QuietConfig.Version -ne 11 -or $v11QuietConfig.QuietCpuMaxHighBattery -ne 65 -or
+    if ($v11QuietConfig.Version -ne 13 -or $v11QuietConfig.QuietCpuMaxHighBattery -ne 65 -or
         $v11QuietConfig.QuietCpuMaxMediumBattery -ne 60 -or $v11QuietConfig.QuietCpuMaxLowBattery -ne 50 -or
         $v11QuietConfig.QuietCpuMediumThreshold -ne 70 -or $v11QuietConfig.QuietCpuLowThreshold -ne 30 -or
         $v11QuietConfig.QuietProcessRestartWindowSeconds -ne 600 -or $v11QuietConfig.QuietProcessCooldownSeconds -ne 1800) {
