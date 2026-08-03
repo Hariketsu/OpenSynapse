@@ -1139,6 +1139,8 @@ namespace OpenSynapseNative
         private static int coalescedEventCount;
         private static long lastAcceptedTimestamp;
         private static int sessionLocked;
+        private static int suspended;
+        private static int wakeVersion;
         private const int DebounceMilliseconds = 3000;
 
         public static int Version
@@ -1159,6 +1161,22 @@ namespace OpenSynapseNative
         public static bool SessionLocked
         {
             get { return Interlocked.CompareExchange(ref sessionLocked, 0, 0) != 0; }
+        }
+
+        public static bool IsSuspended
+        {
+            get { return Interlocked.CompareExchange(ref suspended, 0, 0) != 0; }
+        }
+
+        public static int WakeVersion
+        {
+            get { return Interlocked.CompareExchange(ref wakeVersion, 0, 0); }
+        }
+
+        private static void MarkWake()
+        {
+            Interlocked.Exchange(ref suspended, 0);
+            Interlocked.Increment(ref wakeVersion);
         }
 
         private static void MarkPowerChanged()
@@ -1185,7 +1203,14 @@ namespace OpenSynapseNative
 
             powerHandler = delegate(object sender, PowerModeChangedEventArgs args)
             {
-                if (args.Mode == PowerModes.Resume || args.Mode == PowerModes.StatusChange)
+                if (args.Mode == PowerModes.Suspend)
+                    Interlocked.Exchange(ref suspended, 1);
+                else if (args.Mode == PowerModes.Resume)
+                {
+                    MarkWake();
+                    MarkPowerChanged();
+                }
+                else if (args.Mode == PowerModes.StatusChange)
                     MarkPowerChanged();
             };
             sessionHandler = delegate(object sender, SessionSwitchEventArgs args)
@@ -1196,7 +1221,12 @@ namespace OpenSynapseNative
                     args.Reason == SessionSwitchReason.SessionLogon ||
                     args.Reason == SessionSwitchReason.ConsoleConnect ||
                     args.Reason == SessionSwitchReason.RemoteConnect)
+                {
                     Interlocked.Exchange(ref sessionLocked, 0);
+                    // Modern Standby does not reliably raise PowerModeChanged on all
+                    // systems. Unlock/connect is therefore also a display-wake edge.
+                    MarkWake();
+                }
             };
             SystemEvents.PowerModeChanged += powerHandler;
             SystemEvents.SessionSwitch += sessionHandler;
@@ -1208,6 +1238,21 @@ namespace OpenSynapseNative
                 return;
             SystemEvents.PowerModeChanged -= powerHandler;
             SystemEvents.SessionSwitch -= sessionHandler;
+        }
+    }
+
+    public static class DisplayWakeManager
+    {
+        private const uint ES_DISPLAY_REQUIRED = 0x00000002;
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern uint SetThreadExecutionState(uint esFlags);
+
+        public static bool RequestWake()
+        {
+            // Without ES_CONTINUOUS this is a one-shot display-idle reset. It does
+            // not retain a power request or change the configured display timeout.
+            return SetThreadExecutionState(ES_DISPLAY_REQUIRED) != 0;
         }
     }
 

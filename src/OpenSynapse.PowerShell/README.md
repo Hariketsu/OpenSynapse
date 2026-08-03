@@ -1,4 +1,4 @@
-# OpenSynapse 2.5.0
+# OpenSynapse 2.5.1
 
 OpenSynapse 是基于 PowerPilot 2.4.1 重新移植的 Windows 电源、显示与 Razer HID 控制程序。发布版保留原型已验证的单进程 PowerShell 5.1/WinForms 架构，并将产品名、任务、目录、快捷方式和 AppUserModelID 全部更名为 OpenSynapse。
 

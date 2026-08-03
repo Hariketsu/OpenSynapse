@@ -16,7 +16,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $script:AppName = 'OpenSynapse'
-$script:AppVersion = '2.5.0'
+$script:AppVersion = '2.5.1'
 $script:AppUserModelId = 'OpenSynapse.Desktop'
 $script:TaskName = 'OpenSynapse'
 $script:LegacyAgentTaskName = 'OpenSynapse Agent'
@@ -60,6 +60,11 @@ $script:AdapterConfirmationIntervalSeconds = 7
 $script:AdapterLowConfirmationSamples = 3
 $script:AdapterStartupWarmupSeconds = 30
 $script:PowerEventProbeDelaySeconds = 4
+$script:DisplayEventSettleSeconds = 5
+$script:DisplayWakeSettleSeconds = 12
+$script:DisplayTopologySampleSeconds = 3
+$script:DisplayWakeGraceSeconds = 30
+$script:DisplayTopologyStableSamplesRequired = 2
 $script:PlanVerificationIntervalSeconds = 30
 $script:CachedSupplyType = $null
 $script:CachedAdapterLimitW = $null
@@ -95,6 +100,14 @@ $script:PendingPowerProbeAt = [DateTime]::MaxValue
 $script:PowerEventsObserved = 0
 $script:PowerEventsCoalesced = 0
 $script:PowerEventTriggeredProbes = 0
+$script:LastWakeVersion = 0
+$script:DisplayTopologyFingerprint = ''
+$script:DisplayTopologyStableSamples = 0
+$script:DisplayRepairReason = ''
+$script:DisplayRepairWakeDeadline = [DateTime]::MinValue
+$script:LastDisplayRepairDeferredReason = ''
+$script:LastKnownExternalMonitorKeys = @()
+$script:LastKnownResponsiveExternalMonitorKeys = @()
 $script:QuietProcessGuard = @{}
 
 $script:Guids = @{
@@ -2357,6 +2370,137 @@ function Get-DisplayStateSnapshot {
     }
 }
 
+function Get-DisplayIdentityKey {
+    param([Parameter(Mandatory)][object]$Mode)
+    foreach ($propertyName in @('MonitorDeviceKey', 'MonitorDeviceId', 'DeviceKey', 'DeviceId', 'DeviceName')) {
+        $property = $Mode.PSObject.Properties[$propertyName]
+        if ($null -ne $property -and -not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+            return ("$propertyName=$([string]$property.Value)").ToUpperInvariant()
+        }
+    }
+    return ''
+}
+
+function Get-DisplayTopologyFingerprint {
+    param([AllowEmptyCollection()][object[]]$Modes = @())
+    $parts = @($Modes | ForEach-Object {
+        $identity = Get-DisplayIdentityKey $_
+        '{0}|{1}x{2}@{3}|{4},{5}|{6}' -f $identity, [int]$_.Width, [int]$_.Height,
+            [int]$_.Frequency, [int]$_.PositionX, [int]$_.PositionY, [int]$_.Orientation
+    } | Sort-Object)
+    return ($parts -join '||')
+}
+
+function Get-ExternalMonitorIdentityKeys {
+    param([AllowNull()][object]$DisplayState)
+    if ($null -eq $DisplayState) { return @() }
+    $internalByGdiName = @{}
+    foreach ($item in @($DisplayState.DynamicRefresh)) {
+        $internalByGdiName[[string]$item.GdiDeviceName] = [bool]$item.IsInternal
+    }
+    return [string[]]@($DisplayState.Modes | ForEach-Object {
+        $gdiName = [string]$_.DeviceName
+        $isInternal = $internalByGdiName.ContainsKey($gdiName) -and [bool]$internalByGdiName[$gdiName]
+        if (-not $isInternal) { Get-DisplayIdentityKey $_ }
+    } | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } | Select-Object -Unique)
+}
+
+function Get-ResponsiveExternalMonitorIdentityKeys {
+    param([AllowNull()][object]$DisplayState)
+    if ($null -eq $DisplayState) { return @() }
+    $externalKeys = [string[]]@(Get-ExternalMonitorIdentityKeys $DisplayState)
+    if ($externalKeys.Count -eq 0) { return @() }
+    $modeByGdiName = @{}
+    foreach ($mode in @($DisplayState.Modes)) { $modeByGdiName[[string]$mode.DeviceName] = $mode }
+    return [string[]]@($DisplayState.PhysicalBrightness | Where-Object { [bool]$_.Supported } | ForEach-Object {
+        $gdiName = [string]$_.GdiDeviceName
+        if ($modeByGdiName.ContainsKey($gdiName)) {
+            $key = Get-DisplayIdentityKey $modeByGdiName[$gdiName]
+            if ($key -in $externalKeys) { $key }
+        }
+    } | Where-Object { $_ } | Select-Object -Unique)
+}
+
+function Register-DisplayRepair {
+    param(
+        [DateTime]$Now = (Get-Date),
+        [string]$Reason = 'DisplayChanged',
+        [int]$DelaySeconds = $script:DisplayEventSettleSeconds,
+        [switch]$WakeRecovery
+    )
+    $candidate = $Now.AddSeconds([Math]::Max(1, $DelaySeconds))
+    if ($script:PendingDisplayRepairAt -eq [DateTime]::MaxValue -or $candidate -gt $script:PendingDisplayRepairAt) {
+        $script:PendingDisplayRepairAt = $candidate
+    }
+    $script:DisplayTopologyFingerprint = ''
+    $script:DisplayTopologyStableSamples = 0
+    $script:DisplayRepairReason = $Reason
+    if ($WakeRecovery) {
+        $script:DisplayRepairWakeDeadline = $Now.AddSeconds($script:DisplayWakeGraceSeconds)
+    }
+    return $script:PendingDisplayRepairAt
+}
+
+function Test-DisplayRepairReadiness {
+    param(
+        [DateTime]$Now = (Get-Date),
+        [bool]$SessionLocked = [OpenSynapseNative.PowerChangeSignal]::SessionLocked,
+        [bool]$Suspended = [OpenSynapseNative.PowerChangeSignal]::IsSuspended,
+        [AllowNull()][object]$DisplayState = $null,
+        [AllowEmptyCollection()][string[]]$ExpectedMonitorKeys = @($script:LastKnownExternalMonitorKeys),
+        [AllowEmptyCollection()][string[]]$ExpectedResponsiveMonitorKeys = @($script:LastKnownResponsiveExternalMonitorKeys),
+        [DateTime]$ExpectedMonitorDeadline = $script:DisplayRepairWakeDeadline
+    )
+    $retryAt = $Now.AddSeconds($script:DisplayTopologySampleSeconds)
+    if ($Suspended) {
+        return [pscustomobject]@{ Ready = $false; Reason = 'SystemSuspended'; RetryAt = $retryAt; DisplayState = $null; MissingExpectedKeys = @() }
+    }
+    if ($SessionLocked) {
+        return [pscustomobject]@{ Ready = $false; Reason = 'SessionLocked'; RetryAt = $retryAt; DisplayState = $null; MissingExpectedKeys = @() }
+    }
+    if ($null -eq $DisplayState) {
+        try { $DisplayState = Get-DisplayStateSnapshot }
+        catch {
+            return [pscustomobject]@{ Ready = $false; Reason = 'TopologyUnavailable'; RetryAt = $retryAt; DisplayState = $null; MissingExpectedKeys = @() }
+        }
+    }
+    $modes = @($DisplayState.Modes)
+    if ($modes.Count -eq 0) {
+        return [pscustomobject]@{ Ready = $false; Reason = 'NoActiveDisplay'; RetryAt = $retryAt; DisplayState = $DisplayState; MissingExpectedKeys = @() }
+    }
+    $actualKeys = [string[]]@($modes | ForEach-Object { Get-DisplayIdentityKey $_ } | Where-Object { $_ })
+    $missingExpected = [string[]]@($ExpectedMonitorKeys | Where-Object { $_ -notin $actualKeys })
+    $responsiveKeys = [string[]]@(Get-ResponsiveExternalMonitorIdentityKeys $DisplayState)
+    $unresponsiveExpected = [string[]]@($ExpectedResponsiveMonitorKeys | Where-Object { $_ -notin $responsiveKeys })
+    if ($missingExpected.Count -gt 0 -and $Now -lt $ExpectedMonitorDeadline) {
+        return [pscustomobject]@{ Ready = $false; Reason = 'ExpectedMonitorMissing'; RetryAt = $retryAt; DisplayState = $DisplayState; MissingExpectedKeys = $missingExpected }
+    }
+    if ($unresponsiveExpected.Count -gt 0 -and $Now -lt $ExpectedMonitorDeadline) {
+        return [pscustomobject]@{ Ready = $false; Reason = 'ExpectedMonitorUnresponsive'; RetryAt = $retryAt; DisplayState = $DisplayState; MissingExpectedKeys = $unresponsiveExpected }
+    }
+    $unavailableExpected = [string[]]@($missingExpected + $unresponsiveExpected | Select-Object -Unique)
+    $fingerprint = Get-DisplayTopologyFingerprint $modes
+    if ([string]::IsNullOrWhiteSpace($fingerprint)) {
+        return [pscustomobject]@{ Ready = $false; Reason = 'TopologyUnavailable'; RetryAt = $retryAt; DisplayState = $DisplayState; MissingExpectedKeys = $unavailableExpected }
+    }
+    if ($fingerprint -ne $script:DisplayTopologyFingerprint) {
+        $script:DisplayTopologyFingerprint = $fingerprint
+        $script:DisplayTopologyStableSamples = 1
+        return [pscustomobject]@{ Ready = $false; Reason = 'TopologyStabilizing'; RetryAt = $retryAt; DisplayState = $DisplayState; MissingExpectedKeys = $unavailableExpected }
+    }
+    $script:DisplayTopologyStableSamples++
+    if ($script:DisplayTopologyStableSamples -lt $script:DisplayTopologyStableSamplesRequired) {
+        return [pscustomobject]@{ Ready = $false; Reason = 'TopologyStabilizing'; RetryAt = $retryAt; DisplayState = $DisplayState; MissingExpectedKeys = $unavailableExpected }
+    }
+    return [pscustomobject]@{
+        Ready = $true
+        Reason = if ($unavailableExpected.Count -gt 0) { 'ExpectedMonitorGraceExpired' } else { 'Stable' }
+        RetryAt = [DateTime]::MaxValue
+        DisplayState = $DisplayState
+        MissingExpectedKeys = $unavailableExpected
+    }
+}
+
 function Compare-DisplayStateSnapshot {
     param([object]$ExpectedSnapshot, [AllowNull()][object]$ActualSnapshot = $null)
     if ($null -eq $ActualSnapshot) { $ActualSnapshot = Get-DisplayStateSnapshot }
@@ -2722,7 +2866,24 @@ function Apply-DisplayPolicy {
     $refreshPolicy = ''
     $effectiveRefreshPolicy = ''
     $refreshVerified = $null
-    if ($ApplyVisualPolicy -or $ApplyRefreshPolicy -or $RepairScaling -or ($Full -and [bool]$Config.ManageBrightness)) {
+    $displayMutationRequested = $ApplyVisualPolicy -or $ApplyRefreshPolicy -or $RepairScaling -or ($Full -and [bool]$Config.ManageBrightness)
+    if ($displayMutationRequested -and
+        ([OpenSynapseNative.PowerChangeSignal]::IsSuspended -or [OpenSynapseNative.PowerChangeSignal]::SessionLocked)) {
+        $deferredReason = if ([OpenSynapseNative.PowerChangeSignal]::IsSuspended) { 'system is suspended' } else { 'session is locked' }
+        $null = Register-DisplayRepair -Reason 'PowerStateDeferred' -DelaySeconds $script:DisplayWakeSettleSeconds
+        if ($script:LastDisplayRepairDeferredReason -ne $deferredReason) {
+            Write-AppLog "$Name display policy deferred because the $deferredReason."
+            $script:LastDisplayRepairDeferredReason = $deferredReason
+        }
+        return [pscustomobject]@{
+            ScaleChanges = 0
+            RefreshPolicy = Resolve-RefreshPolicy $Config $Name $Snapshot
+            EffectiveRefreshPolicy = ''
+            RefreshVerified = $null
+            RefreshWarning = "Display policy deferred because the $deferredReason."
+        }
+    }
+    if ($displayMutationRequested) {
         $null = Ensure-DisplayStateCaptured $State
     }
     try {
@@ -2730,6 +2891,8 @@ function Apply-DisplayPolicy {
             $refreshPolicy = Resolve-RefreshPolicy $Config $Name $Snapshot
             $effectiveRefreshPolicy = $refreshPolicy
             if ($refreshPolicy -ne 'Unmanaged') {
+                $beforeRefreshState = Get-DisplayStateSnapshot
+                $beforeRefreshFingerprint = Get-DisplayTopologyFingerprint @($beforeRefreshState.Modes)
                 Write-AppLog "$Name refresh policy=$refreshPolicy applying."
                 if ($refreshPolicy -eq 'DynamicNative') {
                     $dynamicStatus = [OpenSynapseNative.DynamicRefreshManager]::GetStatus()
@@ -2759,6 +2922,10 @@ function Apply-DisplayPolicy {
                 if (-not [bool]$refreshVerification.Valid) {
                     throw "Refresh policy verification failed: $($refreshVerification.Differences -join ' ')"
                 }
+                $afterRefreshFingerprint = Get-DisplayTopologyFingerprint @($refreshVerification.State.Modes)
+                if ($beforeRefreshFingerprint -ne $afterRefreshFingerprint) {
+                    throw 'Display topology changed while the refresh policy was being applied; verification was deferred.'
+                }
                 $refreshVerified = $true
                 Write-AppLog "$Name refresh policy=$refreshPolicy changed=$count."
             }
@@ -2766,7 +2933,13 @@ function Apply-DisplayPolicy {
     }
     catch {
         $dynamicFailure = $_.Exception.Message
-        if ($refreshPolicy -eq 'DynamicNative') {
+        if ($dynamicFailure -like 'Display topology changed*') {
+            $null = Register-DisplayRepair -Reason 'TopologyChangedDuringApply' -DelaySeconds $script:DisplayEventSettleSeconds
+            $refreshVerified = $null
+            $refreshWarning = $dynamicFailure
+            Write-AppLog "$dynamicFailure No fallback mode was written while topology was unstable."
+        }
+        elseif ($refreshPolicy -eq 'DynamicNative') {
             try {
                 $null = [OpenSynapseNative.DynamicRefreshManager]::Disable()
                 try { $null = [OpenSynapseNative.DynamicRefreshManager]::ApplyExternalMaximumRefresh() }
@@ -4421,6 +4594,14 @@ function Start-TrayApplication {
     $script:PowerEventsObserved = 0
     $script:PowerEventsCoalesced = 0
     $script:PowerEventTriggeredProbes = 0
+    $script:LastWakeVersion = 0
+    $script:DisplayTopologyFingerprint = ''
+    $script:DisplayTopologyStableSamples = 0
+    $script:DisplayRepairReason = ''
+    $script:DisplayRepairWakeDeadline = [DateTime]::MinValue
+    $script:LastDisplayRepairDeferredReason = ''
+    $script:LastKnownExternalMonitorKeys = @()
+    $script:LastKnownResponsiveExternalMonitorKeys = @()
     $script:LastPlanVerification = [DateTime]::MinValue
     $script:LastPolicyVerification = [pscustomobject][ordered]@{
         Profile = ''
@@ -4475,6 +4656,7 @@ function Start-TrayApplication {
     [OpenSynapseNative.PowerChangeSignal]::Start()
     $script:LastPowerEventVersion = [OpenSynapseNative.PowerChangeSignal]::Version
     $script:LastPowerEventCount = [OpenSynapseNative.PowerChangeSignal]::EventCount
+    $script:LastWakeVersion = [OpenSynapseNative.PowerChangeSignal]::WakeVersion
     [OpenSynapseNative.GpuTelemetry]::Start(10000)
 
     $trayIconPath = if (Test-Path -LiteralPath $script:SourceTrayIcon) { $script:SourceTrayIcon } else { $script:InstalledTrayIcon }
@@ -6066,6 +6248,13 @@ function Start-TrayApplication {
 
         $powerEventVersion = [OpenSynapseNative.PowerChangeSignal]::Version
         if ($powerEventVersion -ne $script:LastPowerEventVersion) { $script:LastPowerEventVersion = $powerEventVersion }
+        $wakeVersion = [OpenSynapseNative.PowerChangeSignal]::WakeVersion
+        if ($wakeVersion -ne $script:LastWakeVersion) {
+            $script:LastWakeVersion = $wakeVersion
+            $wakeRequested = try { [OpenSynapseNative.DisplayWakeManager]::RequestWake() } catch { $false }
+            $null = Register-DisplayRepair -Reason 'ResumeOrUnlock' -DelaySeconds $script:DisplayWakeSettleSeconds -WakeRecovery
+            Write-AppLog "Resume/unlock display recovery scheduled after ${script:DisplayWakeSettleSeconds}s; wakeRequested=$wakeRequested; expectedExternal=$(@($script:LastKnownExternalMonitorKeys).Count); expectedResponsive=$(@($script:LastKnownResponsiveExternalMonitorKeys).Count)."
+        }
         $null = Register-PowerEventObservation ([OpenSynapseNative.PowerChangeSignal]::EventCount)
         $null = Invoke-PendingPowerProbe
         $snapshot = Get-PowerSnapshot -UseCachedAdapter
@@ -6216,27 +6405,52 @@ function Start-TrayApplication {
         $displayVersion = [OpenSynapseNative.DisplayChangeSignal]::Version
         if ($displayVersion -ne $script:LastDisplayVersion) {
             $script:LastDisplayVersion = $displayVersion
-            if ((Get-Date) -ge $script:IgnoreDisplayEventsUntil) { $script:PendingDisplayRepairAt = (Get-Date).AddSeconds(2) }
+            if ((Get-Date) -ge $script:IgnoreDisplayEventsUntil) {
+                $null = Register-DisplayRepair -Reason 'DisplayChanged' -DelaySeconds $script:DisplayEventSettleSeconds
+            }
         }
         if ((Get-Date) -ge $script:PendingDisplayRepairAt) {
-            $script:PendingDisplayRepairAt = [DateTime]::MaxValue
-            try {
-                if ([string]$script:Config.Selection -eq 'Experiment') {
-                    $script:LastExperimentVerificationAt = [DateTime]::MinValue
-                    $experimentCheck = Test-AndRepairExperimentEnvironment $script:Config $script:State $snapshot $script:AutomationState
-                    if ($null -ne $experimentCheck -and -not [bool]$experimentCheck.Valid) {
-                        $script:TrayIcon.BalloonTipTitle = 'Experiment environment changed'
-                        $script:TrayIcon.BalloonTipText = 'The display topology or a locked display property changed and could not be fully restored. Review Diagnostics before continuing data collection.'
-                        $script:TrayIcon.ShowBalloonTip(6000)
-                    }
-                }
-                else {
-                    $null = Apply-CurrentSelection -Full -ApplyVisualPolicy -RepairScaling -Snapshot $snapshot -AutomationAlreadyUpdated -ThrowOnError -SilentError
+            $displayReadiness = Test-DisplayRepairReadiness
+            if (-not [bool]$displayReadiness.Ready) {
+                $script:PendingDisplayRepairAt = [DateTime]$displayReadiness.RetryAt
+                if ($script:LastDisplayRepairDeferredReason -ne [string]$displayReadiness.Reason) {
+                    Write-AppLog "Display repair deferred: $($displayReadiness.Reason); expectedMissing=$(@($displayReadiness.MissingExpectedKeys).Count)."
+                    $script:LastDisplayRepairDeferredReason = [string]$displayReadiness.Reason
                 }
             }
-            catch {
-                $script:PendingDisplayRepairAt = (Get-Date).AddSeconds(10)
-                throw
+            else {
+                $repairReason = $script:DisplayRepairReason
+                $script:PendingDisplayRepairAt = [DateTime]::MaxValue
+                $script:LastDisplayRepairDeferredReason = ''
+                try {
+                    if ([string]$script:Config.Selection -eq 'Experiment') {
+                        $script:LastExperimentVerificationAt = [DateTime]::MinValue
+                        $experimentCheck = Test-AndRepairExperimentEnvironment $script:Config $script:State $snapshot $script:AutomationState
+                        if ($null -ne $experimentCheck -and -not [bool]$experimentCheck.Valid) {
+                            $script:TrayIcon.BalloonTipTitle = 'Experiment environment changed'
+                            $script:TrayIcon.BalloonTipText = 'The display topology or a locked display property changed and could not be fully restored. Review Diagnostics before continuing data collection.'
+                            $script:TrayIcon.ShowBalloonTip(6000)
+                        }
+                    }
+                    else {
+                        $null = Apply-CurrentSelection -Full -ApplyVisualPolicy -RepairScaling -Snapshot $snapshot -AutomationAlreadyUpdated -ThrowOnError -SilentError
+                    }
+                    $stableDisplayState = Get-DisplayStateSnapshot
+                    $script:LastKnownExternalMonitorKeys = @(Get-ExternalMonitorIdentityKeys $stableDisplayState)
+                    $script:LastKnownResponsiveExternalMonitorKeys = @(Get-ResponsiveExternalMonitorIdentityKeys $stableDisplayState)
+                    if ([string]$displayReadiness.Reason -eq 'ExpectedMonitorGraceExpired') {
+                        Write-AppLog "Display wake grace expired with $(@($displayReadiness.MissingExpectedKeys).Count) expected external monitor(s) absent; only the stable current topology was managed."
+                        $script:TrayIcon.BalloonTipTitle = 'External display did not return'
+                        $script:TrayIcon.BalloonTipText = 'Windows did not restore an expected external display after wake. OpenSynapse left the missing path untouched and managed only the stable active topology.'
+                        $script:TrayIcon.ShowBalloonTip(6000)
+                    }
+                    Write-AppLog "Display repair completed after stable topology; reason=$repairReason; external=$(@($script:LastKnownExternalMonitorKeys).Count)."
+                    $script:DisplayRepairWakeDeadline = [DateTime]::MinValue
+                }
+                catch {
+                    $script:PendingDisplayRepairAt = (Get-Date).AddSeconds(10)
+                    throw
+                }
             }
         }
         $script:LastMonitorSnapshot = $snapshot
@@ -6366,6 +6580,13 @@ function Start-TrayApplication {
     $applyStartupRefresh = [string]$script:Config.RefreshPolicy -eq 'Auto' -or $startupExperiment
     Write-AppLog "Startup profile apply beginning: selection=$($script:Config.Selection) supply=$($startupSnapshot.SupplyType) refresh=$($script:Config.RefreshPolicy)."
     Apply-CurrentSelection -Full -ApplyVisualPolicy:($startupEcoSelected -or $startupExperiment) -ApplyRefreshPolicy:($applyStartupRefresh -or $startupEcoSelected) -Snapshot $startupSnapshot
+    try {
+        $startupDisplayState = Get-DisplayStateSnapshot
+        $script:LastKnownExternalMonitorKeys = @(Get-ExternalMonitorIdentityKeys $startupDisplayState)
+        $script:LastKnownResponsiveExternalMonitorKeys = @(Get-ResponsiveExternalMonitorIdentityKeys $startupDisplayState)
+        Write-AppLog "Startup display topology captured for wake recovery; external=$(@($script:LastKnownExternalMonitorKeys).Count); responsive=$(@($script:LastKnownResponsiveExternalMonitorKeys).Count)."
+    }
+    catch { Write-AppLog "Startup display topology identity capture deferred: $($_.Exception.Message)" }
     if ($startupExperiment) {
         Complete-ExperimentSessionStart $script:Config $script:State $startupSnapshot $script:AutomationState -NewSession:$newStartupExperiment
     }

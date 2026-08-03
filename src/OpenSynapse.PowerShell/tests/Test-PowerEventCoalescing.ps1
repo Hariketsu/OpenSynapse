@@ -38,7 +38,8 @@ if ($null -ne $script:CachedSupplyType -or $null -ne $script:CachedAdapterLimitW
 if (Invoke-PendingPowerProbe $start.AddSeconds(10)) { throw 'Power-event probe repeated without another event.' }
 
 $nativeSource = Get-Content -Raw -LiteralPath (Join-Path (Split-Path -Parent $mainScript) 'OpenSynapse.Native.cs')
-foreach ($marker in @('DebounceMilliseconds = 3000', 'CoalescedEventCount', 'SystemEvents.SessionSwitch')) {
+foreach ($marker in @('DebounceMilliseconds = 3000', 'CoalescedEventCount', 'SystemEvents.SessionSwitch',
+    'PowerModes.Suspend', 'WakeVersion', 'MarkWake()')) {
     if ($nativeSource.IndexOf($marker, [StringComparison]::Ordinal) -lt 0) { throw "Missing native coalescing marker: $marker" }
 }
 

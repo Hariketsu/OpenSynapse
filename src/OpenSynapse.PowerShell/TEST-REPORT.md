@@ -1,4 +1,15 @@
-# OpenSynapse 2.5.0 Experiment、逐屏恢复与硬件遥测验证报告
+# OpenSynapse 验证报告
+
+## 2026-08-03 2.5.1 外屏 Modern Standby 唤醒修复
+
+- 故障证据：20:07:26 系统进入 Modern Standby，2.5.0 在锁屏期间于 20:07:53、20:08:08 执行 `Fixed240`；20:08:30 唤醒后又在不稳定拓扑上重复执行。20:09:28 只剩内屏 2560×1600/150%，外屏 DDC 端点消失；重新插线后 20:10:03 恢复外屏 2560×1440/125%/DDC 70%。
+- 排除项：供电始终为 `HighPowerAC`，外屏连接 AMD Radeon 880M，Windows 没有记录 AMD/NVIDIA 显示驱动崩溃，因此不是 280W→PD 误判或 NVIDIA TGP/Hyper 切换故障。
+- 修复验证：锁屏和挂起均阻断显示写入；相同 `DISPLAY1` 下不同 `MonitorDeviceKey` 会被判定为不同拓扑；预期外屏缺失会等待，拓扑连续两次稳定后才允许应用。
+- 安装回读：2.5.1 计划任务 `Running/Highest`，运行时 `Healthy/PerMonitorV2`，配置 v14、状态 v11，78 项电源参数、安装文件、快捷方式和图标全部通过，启动后策略失败为 0；启动日志正确记录 `external=1; responsive=1`。
+- 当前真实三星外屏只读验证通过：首次采样 `TopologyStabilizing`、第二次采样 `Stable`。未主动触发一次完整 Modern Standby 物理复现，以免在本轮安装期间再次中断用户显示连接。
+- 版本 2.5.1；未更改 OEM 异构核心阈值、EC、风扇、TGP 或 MUX。
+
+## 2026-08-02 2.5.0 Experiment、逐屏恢复与硬件遥测
 
 验证日期：2026-08-03
 分支：`dev-echo`

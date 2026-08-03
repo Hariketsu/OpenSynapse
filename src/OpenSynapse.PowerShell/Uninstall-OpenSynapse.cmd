@@ -1,6 +1,6 @@
 @echo off
 setlocal
-title OpenSynapse 2.5.0 Uninstaller
+title OpenSynapse 2.5.1 Uninstaller
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0OpenSynapse.ps1" -Mode Uninstall
 set "EXITCODE=%ERRORLEVEL%"
 echo.

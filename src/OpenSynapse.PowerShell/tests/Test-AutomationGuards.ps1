@@ -77,7 +77,7 @@ if ($lockedPortable.Profile -ne 'Quiet' -or -not $lockedPortable.Transitioned) {
 }
 
 $nativeProperties = [OpenSynapseNative.PowerChangeSignal].GetProperties().Name
-foreach ($property in @('EventCount', 'CoalescedEventCount', 'SessionLocked')) {
+foreach ($property in @('EventCount', 'CoalescedEventCount', 'SessionLocked', 'IsSuspended', 'WakeVersion')) {
     if ($property -notin $nativeProperties) { throw "Power/session signal is missing $property." }
 }
 

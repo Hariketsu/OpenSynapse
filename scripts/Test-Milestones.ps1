@@ -29,6 +29,7 @@ $definitionTests = @(
     'Test-QuietEndurance.ps1',
     'Test-QuietControlSemantics.ps1',
     'Test-ExperimentEnvironment.ps1',
+    'Test-DisplayResumeSafety.ps1',
     'Test-SupplyRefreshDefinition.ps1',
     'Test-SupplyDebounce.ps1',
     'Test-PowerEventCoalescing.ps1',
