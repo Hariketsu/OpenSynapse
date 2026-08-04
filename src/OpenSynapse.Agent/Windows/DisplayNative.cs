@@ -596,6 +596,19 @@ namespace PowerPilotNative
                     throw new Win32Exception(change, "Cannot restore the registry display mode for " + device.DeviceName + ".");
             }
         }
+
+        public static void RestoreRegistryModes(string[] deviceNames)
+        {
+            if (deviceNames is null || deviceNames.Length == 0) return;
+            var selected = new HashSet<string>(deviceNames, StringComparer.OrdinalIgnoreCase);
+            foreach (DISPLAY_DEVICE device in GetActiveDevices())
+            {
+                if (!selected.Contains(device.DeviceName)) continue;
+                int change = ChangeDisplaySettingsExReset(device.DeviceName, IntPtr.Zero, IntPtr.Zero, 0, IntPtr.Zero);
+                if (change != DISP_CHANGE_SUCCESSFUL)
+                    throw new Win32Exception(change, "Cannot restore the registry display mode for " + device.DeviceName + ".");
+            }
+        }
     }
 
     public sealed class AdvancedColorInfo

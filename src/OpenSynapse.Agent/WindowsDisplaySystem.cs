@@ -52,13 +52,13 @@ internal sealed class WindowsDisplaySystem : IDisplaySystem
         _ = DisplayScaling.SetScale(display, desiredPercent);
     }
 
-    public void ApplyMaximumRefresh() => _ = DisplayModeManager.ApplyMaximumRefresh();
+    public void ApplyMaximumRefresh() => _ = DynamicRefreshManager.ApplyInternalMaximumRefresh();
 
     public void ApplyFixedRefresh(int targetHz) => _ = DynamicRefreshManager.ApplyProfileRefresh(targetHz);
 
     public void ApplyDynamicNativeRefresh() => _ = DynamicRefreshManager.EnableNativeDynamic();
 
-    public void RestoreRefresh() => DisplayModeManager.RestoreRegistryModes();
+    public void RestoreRefresh() => DynamicRefreshManager.RestoreInternalRegistryModes();
 
     private static string RunPowerShell(string command) => ProcessRunner.Run(
         Path.Combine(Environment.SystemDirectory, "WindowsPowerShell", "v1.0", "powershell.exe"),

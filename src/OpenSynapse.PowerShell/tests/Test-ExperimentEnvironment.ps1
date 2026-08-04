@@ -60,7 +60,9 @@ $mainSource = Get-Content -Raw -LiteralPath $mainScript
 foreach ($requiredDefinition in @(
     "`$rollbackSelection = if (`$experimentClosed) { 'Auto' } else { `$previousSelection }",
     "`$null = Export-ExperimentEnvironmentReport `$Config `$State `$PowerSnapshot `$AutomationState End",
-    "`$verificationTarget = if (`$null -ne `$State.ExperimentSession -and `$Phase -eq 'Restored'"
+    "`$verificationTarget = if (`$null -ne `$State.ExperimentSession -and `$Phase -eq 'Restored'",
+    '$restoreFrequency = if (Test-IsInternalDisplayMode $currentRefreshState $currentMode)',
+    'if (-not [bool]$current.IsInternal) { continue }'
 )) {
     if ($mainSource.IndexOf($requiredDefinition, [StringComparison]::Ordinal) -lt 0) {
         throw "Missing Experiment safety definition: $requiredDefinition"
@@ -76,11 +78,28 @@ if (@($display.Modes).Count -lt 1 -or @($display.Scaling).Count -lt 1 -or
 $identical = Compare-DisplayStateSnapshot $display (Get-DisplayStateSnapshot)
 if (-not [bool]$identical.Valid) { throw "An unchanged display snapshot did not verify: $($identical.Differences -join '; ')" }
 
-$changed = ($display | ConvertTo-Json -Depth 12 | ConvertFrom-Json)
-$changed.Modes[0].Frequency = [int]$changed.Modes[0].Frequency + 60
-$difference = Compare-DisplayStateSnapshot $changed $display
-if ([bool]$difference.Valid -or @($difference.Differences).Count -lt 1) {
-    throw 'Display-state drift detection did not report a refresh mismatch.'
+$synthetic = [pscustomobject]@{
+    Modes = @(
+        [pscustomobject]@{ DeviceName = '\\.\DISPLAY1'; MonitorDeviceKey = 'internal'; Width = 2560; Height = 1600; BitsPerPixel = 32; Frequency = 60; PositionX = 0; PositionY = 0; Orientation = 0 },
+        [pscustomobject]@{ DeviceName = '\\.\DISPLAY2'; MonitorDeviceKey = 'external'; Width = 2560; Height = 1440; BitsPerPixel = 32; Frequency = 165; PositionX = 2560; PositionY = 0; Orientation = 0 }
+    )
+    DynamicRefresh = @(
+        [pscustomobject]@{ Key = 'internal'; GdiDeviceName = '\\.\DISPLAY1'; IsInternal = $true; Enabled = $false; BaseFrequency = 60; BoostFrequency = 60 },
+        [pscustomobject]@{ Key = 'external'; GdiDeviceName = '\\.\DISPLAY2'; IsInternal = $false; Enabled = $false; BaseFrequency = 165; BoostFrequency = 165 }
+    )
+    Scaling = @(); AdvancedColor = @(); ColorProfiles = @(); Brightness = @(); PhysicalBrightness = @()
+}
+$changedInternal = ($synthetic | ConvertTo-Json -Depth 12 | ConvertFrom-Json)
+$changedInternal.Modes[0].Frequency = 240
+$internalDifference = Compare-DisplayStateSnapshot $changedInternal $synthetic
+if ([bool]$internalDifference.Valid -or @($internalDifference.Differences).Count -lt 1) {
+    throw 'Internal display-state drift detection did not report a refresh mismatch.'
+}
+$changedExternal = ($synthetic | ConvertTo-Json -Depth 12 | ConvertFrom-Json)
+$changedExternal.Modes[1].Frequency = 240
+$externalDifference = Compare-DisplayStateSnapshot $changedExternal $synthetic
+if (-not [bool]$externalDifference.Valid) {
+    throw "External refresh was incorrectly included in Experiment restoration verification: $($externalDifference.Differences -join '; ')"
 }
 
 $hardware = [OpenSynapseNative.HardwareTelemetry]::Read()
@@ -107,7 +126,7 @@ try {
         throw 'Experiment report did not create JSON, HTML and SHA-256 outputs.'
     }
     $manifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $report.JsonPath | ConvertFrom-Json
-    if ($manifest.ReportSchemaVersion -ne 1 -or $manifest.OpenSynapseVersion -ne '2.5.1' -or
+    if ($manifest.ReportSchemaVersion -ne 1 -or $manifest.OpenSynapseVersion -ne '2.5.2' -or
         @($manifest.Display.Modes).Count -lt 1 -or $null -eq $manifest.HardwareTelemetry -or
         $null -eq $manifest.WindowsGpuTelemetry -or $null -eq $manifest.Machine -or
         $null -eq $manifest.Machine.PSObject.Properties['EmbeddedControllerVersion']) {
@@ -123,7 +142,8 @@ $result = [pscustomobject]@{
     ColorProfileCount = @($display.ColorProfiles | Where-Object { [bool]$_.Available }).Count
     ThermalZoneCount = @($hardware.ThermalZones).Count
     NpuAvailable = [bool]$hardware.NpuAvailable
-    DriftDetection = -not [bool]$difference.Valid
+    InternalRefreshDriftDetected = -not [bool]$internalDifference.Valid
+    ExternalRefreshUnmanaged = [bool]$externalDifference.Valid
     ReportJsonHtmlAndHash = $true
     CompletedAt = (Get-Date).ToString('o')
 }

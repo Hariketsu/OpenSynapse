@@ -16,7 +16,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $script:AppName = 'OpenSynapse'
-$script:AppVersion = '2.5.1'
+$script:AppVersion = '2.5.2'
 $script:AppUserModelId = 'OpenSynapse.Desktop'
 $script:TaskName = 'OpenSynapse'
 $script:LegacyAgentTaskName = 'OpenSynapse Agent'
@@ -136,6 +136,7 @@ $script:Guids = @{
     PciLinkState         = 'ee12f906-d277-404b-b6da-e5fa1a576df5'
     Display              = '7516b95f-f776-4464-8c53-06167f40cc99'
     DisplayTimeout       = '3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e'
+    ConsoleLockDisplayTimeout = '8ec4b3a5-6868-48c2-be75-4f3044be88a7'
     Usb                  = '2a737441-1930-4402-8d77-b2bebba308a3'
     UsbSelectiveSuspend  = '48e6b7a6-50f5-4782-a5d4-53bb8f07e226'
     EnergySaver          = 'de830923-a562-41af-a086-e3a2c6bad2da'
@@ -380,9 +381,10 @@ function Set-ProfilePolicy {
         Set-PlanPair $PlanGuid $script:Guids.PciExpress $script:Guids.PciLinkState 0 0 -Optional
         Set-PlanPair $PlanGuid $script:Guids.Graphics $script:Guids.GpuPreference 0 0 -Optional
         Set-PlanPair $PlanGuid $script:Guids.Display $script:Guids.DisplayTimeout 900 300
+        Set-PlanPair $PlanGuid $script:Guids.Display $script:Guids.ConsoleLockDisplayTimeout 900 30
         Set-PlanPair $PlanGuid $script:Guids.Usb $script:Guids.UsbSelectiveSuspend 0 0 -Optional
         Set-PlanPair $PlanGuid $script:Guids.EnergySaver $script:Guids.EnergySaverThreshold 0 0 -Optional
-        Set-PlanPair $PlanGuid $script:Guids.Sleep $script:Guids.StandbyIdle 0 900
+        Set-PlanPair $PlanGuid $script:Guids.Sleep $script:Guids.StandbyIdle 10800 900
         Set-PlanPair $PlanGuid $script:Guids.Sleep $script:Guids.HibernateIdle 0 3600
         Set-PlanPair $PlanGuid $script:Guids.Buttons $script:Guids.LidAction 1 1
     }
@@ -394,17 +396,20 @@ function Set-ProfilePolicy {
         Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.CoolingPolicy 1 0 -Optional
         Set-PlanPair $PlanGuid $script:Guids.Wireless $script:Guids.WirelessPowerSaving 1 2 -Optional
         Set-PlanPair $PlanGuid $script:Guids.PciExpress $script:Guids.PciLinkState 1 2 -Optional
-        Set-PlanPair $PlanGuid $script:Guids.Display $script:Guids.DisplayTimeout 600 300
+        Set-PlanPair $PlanGuid $script:Guids.Display $script:Guids.DisplayTimeout 900 300
+        Set-PlanPair $PlanGuid $script:Guids.Display $script:Guids.ConsoleLockDisplayTimeout 900 30
         Set-PlanPair $PlanGuid $script:Guids.Usb $script:Guids.UsbSelectiveSuspend 1 1 -Optional
         Set-PlanPair $PlanGuid $script:Guids.EnergySaver $script:Guids.EnergySaverThreshold 0 50 -Optional
-        Set-PlanPair $PlanGuid $script:Guids.Sleep $script:Guids.StandbyIdle 900 600
-        Set-PlanPair $PlanGuid $script:Guids.Sleep $script:Guids.HibernateIdle 3600 1800
+        Set-PlanPair $PlanGuid $script:Guids.Sleep $script:Guids.StandbyIdle 10800 600
+        Set-PlanPair $PlanGuid $script:Guids.Sleep $script:Guids.HibernateIdle 0 1800
         Set-PlanPair $PlanGuid $script:Guids.Buttons $script:Guids.LidAction 1 2
         if ($Name -eq 'Experiment') {
-            # Prevent an unattended research session from changing display or sleep state.
+            # Keep the requested AC desktop timeouts while retaining the previous
+            # no-timeout behavior on battery for an explicitly locked experiment.
             # CPU behavior stays close to Balance to avoid heat-driven timing drift.
-            Set-PlanPair $PlanGuid $script:Guids.Display $script:Guids.DisplayTimeout 0 0
-            Set-PlanPair $PlanGuid $script:Guids.Sleep $script:Guids.StandbyIdle 0 0
+            Set-PlanPair $PlanGuid $script:Guids.Display $script:Guids.DisplayTimeout 900 0
+            Set-PlanPair $PlanGuid $script:Guids.Display $script:Guids.ConsoleLockDisplayTimeout 900 0
+            Set-PlanPair $PlanGuid $script:Guids.Sleep $script:Guids.StandbyIdle 10800 0
             Set-PlanPair $PlanGuid $script:Guids.Sleep $script:Guids.HibernateIdle 0 0
             Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.ProcessorEpp 40 60 -Optional
             Set-PlanPair $PlanGuid $script:Guids.Processor $script:Guids.CoolingPolicy 1 1 -Optional
@@ -430,11 +435,12 @@ function Set-ProfilePolicy {
         Set-PlanPair $PlanGuid $script:Guids.Wireless $script:Guids.WirelessPowerSaving 3 3 -Optional
         Set-PlanPair $PlanGuid $script:Guids.PciExpress $script:Guids.PciLinkState 2 2 -Optional
         Set-PlanPair $PlanGuid $script:Guids.Graphics $script:Guids.GpuPreference 1 1 -Optional
-        Set-PlanPair $PlanGuid $script:Guids.Display $script:Guids.DisplayTimeout 300 120
+        Set-PlanPair $PlanGuid $script:Guids.Display $script:Guids.DisplayTimeout 900 120
+        Set-PlanPair $PlanGuid $script:Guids.Display $script:Guids.ConsoleLockDisplayTimeout 900 30
         Set-PlanPair $PlanGuid $script:Guids.Usb $script:Guids.UsbSelectiveSuspend 1 1 -Optional
         Set-PlanPair $PlanGuid $script:Guids.EnergySaver $script:Guids.EnergySaverThreshold 0 100 -Optional
-        Set-PlanPair $PlanGuid $script:Guids.Sleep $script:Guids.StandbyIdle 600 180
-        Set-PlanPair $PlanGuid $script:Guids.Sleep $script:Guids.HibernateIdle 1800 900
+        Set-PlanPair $PlanGuid $script:Guids.Sleep $script:Guids.StandbyIdle 10800 180
+        Set-PlanPair $PlanGuid $script:Guids.Sleep $script:Guids.HibernateIdle 0 900
         Set-PlanPair $PlanGuid $script:Guids.Sleep $script:Guids.WakeTimers 0 0 -Optional
         Set-PlanPair $PlanGuid $script:Guids.NoSubgroup $script:Guids.ConnectivityStandby 0 0 -Optional
         Set-PlanPair $PlanGuid $script:Guids.Buttons $script:Guids.LidAction 1 2
@@ -2391,6 +2397,35 @@ function Get-DisplayTopologyFingerprint {
     return ($parts -join '||')
 }
 
+function Get-DisplayIdentityFingerprint {
+    param([AllowEmptyCollection()][object[]]$Modes = @())
+    return (@($Modes | ForEach-Object { Get-DisplayIdentityKey $_ } |
+        Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) } |
+        Sort-Object) -join '||')
+}
+
+function Test-IsInternalDisplayMode {
+    param([AllowNull()][object]$DisplayState, [AllowNull()][object]$Mode)
+    if ($null -eq $DisplayState -or $null -eq $Mode) { return $false }
+    $gdiName = [string]$Mode.DeviceName
+    $path = @($DisplayState.DynamicRefresh | Where-Object {
+        [string]$_.GdiDeviceName -eq $gdiName
+    }) | Select-Object -First 1
+    return $null -ne $path -and [bool]$path.IsInternal
+}
+
+function Get-ExternalDisplayModeFingerprint {
+    param([AllowNull()][object]$DisplayState)
+    if ($null -eq $DisplayState) { return '' }
+    return (@($DisplayState.Modes | ForEach-Object {
+        if (-not (Test-IsInternalDisplayMode $DisplayState $_)) {
+            '{0}|{1}x{2}@{3}|{4}|{5},{6}|{7}' -f (Get-DisplayIdentityKey $_), [int]$_.Width,
+                [int]$_.Height, [int]$_.Frequency, [int]$_.BitsPerPixel,
+                [int]$_.PositionX, [int]$_.PositionY, [int]$_.Orientation
+        }
+    } | Sort-Object) -join '||')
+}
+
 function Get-ExternalMonitorIdentityKeys {
     param([AllowNull()][object]$DisplayState)
     if ($null -eq $DisplayState) { return @() }
@@ -2514,9 +2549,10 @@ function Compare-DisplayStateSnapshot {
             (-not $hasStableMonitorKey -and [string]$_.DeviceName -eq [string]$expectedMode.DeviceName)
         }) | Select-Object -First 1
         if ($null -eq $currentMode) { $differences.Add("Display missing: $($expectedMode.DeviceName)"); continue }
+        $isInternal = Test-IsInternalDisplayMode $ActualSnapshot $currentMode
         if ([int]$currentMode.Width -ne [int]$expectedMode.Width -or [int]$currentMode.Height -ne [int]$expectedMode.Height -or
             [int]$currentMode.BitsPerPixel -ne [int]$expectedMode.BitsPerPixel -or
-            [Math]::Abs([int]$currentMode.Frequency - [int]$expectedMode.Frequency) -gt 1 -or
+            ($isInternal -and [Math]::Abs([int]$currentMode.Frequency - [int]$expectedMode.Frequency) -gt 1) -or
             [int]$currentMode.PositionX -ne [int]$expectedMode.PositionX -or [int]$currentMode.PositionY -ne [int]$expectedMode.PositionY -or
             [int]$currentMode.Orientation -ne [int]$expectedMode.Orientation) {
             $differences.Add("Mode differs on $($expectedMode.DeviceName): expected $($expectedMode.Width)x$($expectedMode.Height)@$($expectedMode.Frequency), actual $($currentMode.Width)x$($currentMode.Height)@$($currentMode.Frequency)")
@@ -2543,6 +2579,7 @@ function Compare-DisplayStateSnapshot {
         }
     }
     foreach ($expectedDrr in @($ExpectedSnapshot.DynamicRefresh)) {
+        if ($null -ne $expectedDrr.PSObject.Properties['IsInternal'] -and -not [bool]$expectedDrr.IsInternal) { continue }
         $currentDrr = @($ActualSnapshot.DynamicRefresh | Where-Object {
             [string]$_.Key -eq [string]$expectedDrr.Key -or [string]$_.GdiDeviceName -eq [string]$expectedDrr.GdiDeviceName
         }) | Select-Object -First 1
@@ -2624,6 +2661,9 @@ function Restore-DisplayStateSnapshot {
     try { $changes += [int][OpenSynapseNative.DynamicRefreshManager]::Disable() }
     catch { $warnings.Add("DRR disable before restore failed: $($_.Exception.Message)") }
     $currentModes = @([OpenSynapseNative.DisplayModeManager]::GetActiveDisplays())
+    $currentRefreshState = [pscustomobject]@{
+        DynamicRefresh = @([OpenSynapseNative.DynamicRefreshManager]::GetStatuses())
+    }
     foreach ($mode in @($Snapshot.Modes)) {
         $hasStableMonitorKey = $null -ne $mode.PSObject.Properties['MonitorDeviceKey'] -and
             -not [string]::IsNullOrWhiteSpace([string]$mode.MonitorDeviceKey)
@@ -2633,9 +2673,16 @@ function Restore-DisplayStateSnapshot {
         }) | Select-Object -First 1
         if ($null -eq $currentMode) { $warnings.Add("Captured physical display is no longer active: $($mode.DeviceName)"); continue }
         try {
+            # External display geometry may still be restored for an Experiment snapshot,
+            # but its live refresh rate is always preserved and remains unmanaged.
+            $restoreFrequency = if (Test-IsInternalDisplayMode $currentRefreshState $currentMode) {
+                [int]$mode.Frequency
+            } else {
+                [int]$currentMode.Frequency
+            }
             if ([OpenSynapseNative.DisplayModeManager]::RestoreMode(
                 [string]$currentMode.DeviceName, [int]$mode.Width, [int]$mode.Height, [int]$mode.BitsPerPixel,
-                [int]$mode.Frequency, [int]$mode.PositionX, [int]$mode.PositionY, [int]$mode.Orientation)) { $changes++ }
+                $restoreFrequency, [int]$mode.PositionX, [int]$mode.PositionY, [int]$mode.Orientation)) { $changes++ }
         }
         catch { $warnings.Add("Mode restore failed for $($mode.DeviceName): $($_.Exception.Message)") }
     }
@@ -2691,6 +2738,7 @@ function Restore-DisplayStateSnapshot {
             [string]$_.Key -eq [string]$captured.Key -or [string]$_.GdiDeviceName -eq [string]$captured.GdiDeviceName
         }) | Select-Object -First 1
         if ($null -eq $current) { $warnings.Add("DRR path is no longer active: $($captured.GdiDeviceName)"); continue }
+        if (-not [bool]$current.IsInternal) { continue }
         $needsRestore = [bool]$current.Enabled -ne [bool]$captured.Enabled -or
             [Math]::Abs([int]$current.BaseFrequency - [int]$captured.BaseFrequency) -gt 1 -or
             ([bool]$captured.Enabled -and [Math]::Abs([int]$current.BoostFrequency - [int]$captured.BoostFrequency) -gt 1)
@@ -2825,22 +2873,13 @@ function Test-RefreshPolicyApplied {
         $targetHz = [int]$Matches.Hz
         foreach ($mode in @($state.Modes)) {
             $drr = if ($drrByName.ContainsKey([string]$mode.DeviceName)) { $drrByName[[string]$mode.DeviceName] } else { $null }
+            if ($null -eq $drr -or -not [bool]$drr.IsInternal) { continue }
             if ($null -ne $drr -and [bool]$drr.Enabled) {
                 $differences.Add("DRR remained enabled on $($mode.DeviceName) after fixed refresh was requested.")
                 continue
             }
-            $isInternal = $null -ne $drr -and [bool]$drr.IsInternal
-            if ($isInternal) {
-                if ([Math]::Abs([int]$mode.Frequency - $targetHz) -gt 1) {
-                    $differences.Add("Refresh verification failed on $($mode.DeviceName): expected $targetHz Hz, actual $($mode.Frequency) Hz.")
-                }
-            }
-            else {
-                $rates = @([OpenSynapseNative.DisplayModeManager]::GetSupportedRefreshRates([string]$mode.DeviceName))
-                $maximum = if ($rates.Count -gt 0) { [int]($rates | Measure-Object -Maximum).Maximum } else { [int]$mode.Frequency }
-                if ([Math]::Abs([int]$mode.Frequency - $maximum) -gt 1) {
-                    $differences.Add("External refresh verification failed on $($mode.DeviceName): expected maximum $maximum Hz, actual $($mode.Frequency) Hz.")
-                }
+            if ([Math]::Abs([int]$mode.Frequency - $targetHz) -gt 1) {
+                $differences.Add("Refresh verification failed on $($mode.DeviceName): expected $targetHz Hz, actual $($mode.Frequency) Hz.")
             }
         }
     }
@@ -2892,7 +2931,8 @@ function Apply-DisplayPolicy {
             $effectiveRefreshPolicy = $refreshPolicy
             if ($refreshPolicy -ne 'Unmanaged') {
                 $beforeRefreshState = Get-DisplayStateSnapshot
-                $beforeRefreshFingerprint = Get-DisplayTopologyFingerprint @($beforeRefreshState.Modes)
+                $beforeDisplayIdentityFingerprint = Get-DisplayIdentityFingerprint @($beforeRefreshState.Modes)
+                $beforeExternalModeFingerprint = Get-ExternalDisplayModeFingerprint $beforeRefreshState
                 Write-AppLog "$Name refresh policy=$refreshPolicy applying."
                 if ($refreshPolicy -eq 'DynamicNative') {
                     $dynamicStatus = [OpenSynapseNative.DynamicRefreshManager]::GetStatus()
@@ -2900,9 +2940,9 @@ function Apply-DisplayPolicy {
                         $count = [OpenSynapseNative.DynamicRefreshManager]::EnableNativeDynamic()
                     }
                     else {
-                        $count = [OpenSynapseNative.DynamicRefreshManager]::ApplyExternalMaximumRefresh()
+                        $count = 0
                         if (((Get-Date) - $script:LastDynamicRefreshDeferredLog).TotalMinutes -ge 30) {
-                            Write-AppLog 'Dynamic refresh deferred because the internal panel is inactive; active external displays remain at maximum refresh.'
+                            Write-AppLog 'Dynamic refresh deferred because the internal panel is inactive; external display refresh is unmanaged.'
                             $script:LastDynamicRefreshDeferredLog = Get-Date
                         }
                     }
@@ -2910,7 +2950,7 @@ function Apply-DisplayPolicy {
                 else {
                     $null = [OpenSynapseNative.DynamicRefreshManager]::Disable()
                     $count = switch ($refreshPolicy) {
-                        'Maximum' { [OpenSynapseNative.DisplayModeManager]::ApplyMaximumRefresh(); break }
+                        'Maximum' { [OpenSynapseNative.DynamicRefreshManager]::ApplyInternalMaximumRefresh(); break }
                         'Fixed60' { [OpenSynapseNative.DynamicRefreshManager]::ApplyProfileRefresh(60); break }
                         'Fixed120' { [OpenSynapseNative.DynamicRefreshManager]::ApplyProfileRefresh(120); break }
                         'Fixed240' { [OpenSynapseNative.DynamicRefreshManager]::ApplyProfileRefresh(240); break }
@@ -2922,9 +2962,13 @@ function Apply-DisplayPolicy {
                 if (-not [bool]$refreshVerification.Valid) {
                     throw "Refresh policy verification failed: $($refreshVerification.Differences -join ' ')"
                 }
-                $afterRefreshFingerprint = Get-DisplayTopologyFingerprint @($refreshVerification.State.Modes)
-                if ($beforeRefreshFingerprint -ne $afterRefreshFingerprint) {
+                $afterDisplayIdentityFingerprint = Get-DisplayIdentityFingerprint @($refreshVerification.State.Modes)
+                if ($beforeDisplayIdentityFingerprint -ne $afterDisplayIdentityFingerprint) {
                     throw 'Display topology changed while the refresh policy was being applied; verification was deferred.'
+                }
+                $afterExternalModeFingerprint = Get-ExternalDisplayModeFingerprint $refreshVerification.State
+                if ($beforeExternalModeFingerprint -ne $afterExternalModeFingerprint) {
+                    throw 'An external display mode changed while the internal refresh policy was being applied.'
                 }
                 $refreshVerified = $true
                 Write-AppLog "$Name refresh policy=$refreshPolicy changed=$count."
@@ -2942,8 +2986,6 @@ function Apply-DisplayPolicy {
         elseif ($refreshPolicy -eq 'DynamicNative') {
             try {
                 $null = [OpenSynapseNative.DynamicRefreshManager]::Disable()
-                try { $null = [OpenSynapseNative.DynamicRefreshManager]::ApplyExternalMaximumRefresh() }
-                catch { Write-AppLog "External maximum refresh was preserved on a best-effort basis during Eco fallback: $($_.Exception.Message)" }
                 $fallbackCount = [OpenSynapseNative.DynamicRefreshManager]::ApplyInternalFixedRefresh(60)
                 Start-Sleep -Milliseconds 250
                 $fallbackVerification = Test-RefreshPolicyApplied Fixed60
@@ -3049,7 +3091,7 @@ function Restore-DisplayPolicy {
         } catch { }
         # Legacy fields remain as a migration fallback for pre-2.5 state files.
         try { $null = [OpenSynapseNative.DynamicRefreshManager]::Disable() } catch { }
-        try { [OpenSynapseNative.DisplayModeManager]::RestoreRegistryModes() } catch { }
+        try { [OpenSynapseNative.DynamicRefreshManager]::RestoreInternalRegistryModes() } catch { }
         if ($null -ne $State.CapturedBrightness) {
             $null = Set-InternalBrightness ([int]$State.CapturedBrightness)
             $State.CapturedBrightness = $null
@@ -3662,7 +3704,7 @@ function Restore-LegacyDotNetState {
 
     try { $null = [OpenSynapseNative.DynamicRefreshManager]::Disable() }
     catch { $warnings.Add("Dynamic refresh reset failed: $($_.Exception.Message)") }
-    try { [OpenSynapseNative.DisplayModeManager]::RestoreRegistryModes() }
+    try { [OpenSynapseNative.DynamicRefreshManager]::RestoreInternalRegistryModes() }
     catch { $warnings.Add("Refresh-rate restore failed: $($_.Exception.Message)") }
 
     $colorsProperty = Get-ObjectProperty $legacyState 'AdvancedColors'
@@ -5995,7 +6037,7 @@ function Start-TrayApplication {
         if (-not $script:WakeCheck.Checked) { Restore-WakeDevices $script:State }
         if ([string]$script:Config.RefreshPolicy -eq 'Unmanaged') {
             try { $null = [OpenSynapseNative.DynamicRefreshManager]::Disable() } catch { }
-            try { [OpenSynapseNative.DisplayModeManager]::RestoreRegistryModes() } catch { }
+            try { [OpenSynapseNative.DynamicRefreshManager]::RestoreInternalRegistryModes() } catch { }
         }
         if (-not $script:ColorCheck.Checked -and @($script:State.AdvancedColorStates).Count -gt 0) {
             foreach ($item in @($script:State.AdvancedColorStates)) {

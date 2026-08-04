@@ -20,7 +20,7 @@ if ([string]::Equals([IO.Path]::GetFullPath($script:DataDir), [IO.Path]::GetFull
 }
 
 foreach ($required in @(
-    "`$script:AppVersion = '2.5.1'",
+    "`$script:AppVersion = '2.5.2'",
     '[IO.File]::Replace($temporaryPath, $Path, $backupPath, $true)',
     'Recovered JSON from backup',
     '$script:ApplyInProgress',

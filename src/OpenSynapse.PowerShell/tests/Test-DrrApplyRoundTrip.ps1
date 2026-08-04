@@ -14,26 +14,50 @@ $enabled = $null
 $restored = $null
 $fixedModes = @()
 $fixedPath = $null
+$internalDeviceName = ''
+$externalBefore = @{}
+
+function Get-ExternalModeMap {
+    param([object[]]$Modes, [string]$InternalDeviceName)
+    $map = @{}
+    foreach ($mode in @($Modes | Where-Object { [string]$_.DeviceName -ne $InternalDeviceName })) {
+        $map[[string]$mode.DeviceName] = '{0}x{1}@{2}:{3}' -f $mode.Width, $mode.Height, $mode.Frequency, $mode.BitsPerPixel
+    }
+    return $map
+}
+
+function Test-ModeMapEqual {
+    param([hashtable]$Expected, [hashtable]$Actual)
+    if ($Expected.Count -ne $Actual.Count) { return $false }
+    foreach ($key in $Expected.Keys) {
+        if (-not $Actual.ContainsKey($key) -or $Actual[$key] -ne $Expected[$key]) { return $false }
+    }
+    return $true
+}
 
 try {
     . $MainScript -Mode SelfTest
     $beforeModes = @([OpenSynapseNative.DisplayModeManager]::GetActiveDisplays())
     if ($beforeModes.Count -lt 1) { throw 'No active displays were found.' }
-    $frequencies = @($beforeModes | Select-Object -ExpandProperty Frequency -Unique)
-    if ($frequencies.Count -ne 1) { throw 'This safe round-trip test requires all active displays to start at the same refresh rate.' }
-    $restoreHz = [int]$frequencies[0]
-
     $beforeDynamic = [OpenSynapseNative.DynamicRefreshManager]::GetStatus()
     if (-not $beforeDynamic.InternalDisplayActive -or -not $beforeDynamic.Supported) {
         throw "Internal dynamic refresh is unavailable: $($beforeDynamic.Message)"
     }
+    $internalDeviceName = [string]$beforeDynamic.GdiDeviceName
+    $internalBefore = @($beforeModes | Where-Object { [string]$_.DeviceName -eq $internalDeviceName } | Select-Object -First 1)
+    if ($internalBefore.Count -ne 1) { throw 'The active internal display mode could not be mapped.' }
+    $restoreHz = [int]$internalBefore[0].Frequency
+    $externalBefore = Get-ExternalModeMap $beforeModes $internalDeviceName
     if (-not [OpenSynapseNative.DynamicRefreshManager]::ValidateNativeDynamic()) {
         throw 'Windows rejected the native dynamic refresh validation request.'
     }
 
-    $null = [OpenSynapseNative.DisplayModeManager]::ApplyFixedRefresh(120)
+    $null = [OpenSynapseNative.DynamicRefreshManager]::ApplyInternalFixedRefresh(120)
     Start-Sleep -Milliseconds 300
     $fixedModes = @([OpenSynapseNative.DisplayModeManager]::GetActiveDisplays())
+    if (-not (Test-ModeMapEqual $externalBefore (Get-ExternalModeMap $fixedModes $internalDeviceName))) {
+        throw 'An external display mode changed while applying the internal fixed refresh test.'
+    }
     $fixedPath = [OpenSynapseNative.DynamicRefreshManager]::GetStatus()
     $null = [OpenSynapseNative.DynamicRefreshManager]::EnableNativeDynamic()
     $enabled = [OpenSynapseNative.DynamicRefreshManager]::GetStatus()
@@ -58,16 +82,19 @@ catch {
 finally {
     try { $null = [OpenSynapseNative.DynamicRefreshManager]::Disable() } catch { }
     if ($restoreHz -gt 0) {
-        try { $null = [OpenSynapseNative.DisplayModeManager]::ApplyFixedRefresh($restoreHz) } catch { }
+        try { $null = [OpenSynapseNative.DynamicRefreshManager]::ApplyInternalFixedRefresh($restoreHz) } catch { }
     }
     Start-Sleep -Milliseconds 500
     try { $restored = [OpenSynapseNative.DynamicRefreshManager]::GetStatus() } catch { }
 }
 
 $afterModes = @([OpenSynapseNative.DisplayModeManager]::GetActiveDisplays())
-$frequenciesRestored = @($afterModes | Where-Object { $_.Frequency -ne $restoreHz }).Count -eq 0
+$internalRestored = @($afterModes | Where-Object {
+    [string]$_.DeviceName -eq $internalDeviceName -and [Math]::Abs([int]$_.Frequency - $restoreHz) -le 1
+}).Count -eq 1
+$externalRestored = Test-ModeMapEqual $externalBefore (Get-ExternalModeMap $afterModes $internalDeviceName)
 $dynamicDisabled = $null -ne $restored -and -not $restored.Enabled
-if (-not $frequenciesRestored -or -not $dynamicDisabled) { throw 'Display refresh state was not fully restored after the dynamic refresh test.' }
+if (-not $internalRestored -or -not $externalRestored -or -not $dynamicDisabled) { throw 'Display refresh state was not fully restored after the dynamic refresh test.' }
 
 $result = [pscustomobject]@{
     Result = 'PASS'
@@ -77,7 +104,8 @@ $result = [pscustomobject]@{
     EnabledBaseHz = [int]$enabled.BaseFrequency
     EnabledBoostHz = [int]$enabled.BoostFrequency
     RestoreHz = $restoreHz
-    ActiveDisplaysRestored = $frequenciesRestored
+    InternalDisplayRestored = $internalRestored
+    ExternalDisplaysUnchanged = $externalRestored
     DynamicRefreshDisabledAfterTest = $dynamicDisabled
     CompletedAt = (Get-Date).ToString('o')
 }

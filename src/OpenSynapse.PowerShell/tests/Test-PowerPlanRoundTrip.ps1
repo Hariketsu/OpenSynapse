@@ -30,11 +30,12 @@ $cases = @(
     [pscustomobject]@{ Sub = $script:Guids.Processor; Setting = $script:Guids.CoolingPolicy; Hyper = @(1, 1); Balance = @(1, 0); Quiet = @(0, 0) },
     [pscustomobject]@{ Sub = $script:Guids.Wireless; Setting = $script:Guids.WirelessPowerSaving; Hyper = @(0, 0); Balance = @(1, 2); Quiet = @(3, 3) },
     [pscustomobject]@{ Sub = $script:Guids.PciExpress; Setting = $script:Guids.PciLinkState; Hyper = @(0, 0); Balance = @(1, 2); Quiet = @(2, 2) },
-    [pscustomobject]@{ Sub = $script:Guids.Display; Setting = $script:Guids.DisplayTimeout; Hyper = @(900, 300); Balance = @(600, 300); Quiet = @(300, 120) },
+    [pscustomobject]@{ Sub = $script:Guids.Display; Setting = $script:Guids.DisplayTimeout; Hyper = @(900, 300); Balance = @(900, 300); Quiet = @(900, 120) },
+    [pscustomobject]@{ Sub = $script:Guids.Display; Setting = $script:Guids.ConsoleLockDisplayTimeout; Hyper = @(900, 30); Balance = @(900, 30); Quiet = @(900, 30) },
     [pscustomobject]@{ Sub = $script:Guids.Usb; Setting = $script:Guids.UsbSelectiveSuspend; Hyper = @(0, 0); Balance = @(1, 1); Quiet = @(1, 1) },
     [pscustomobject]@{ Sub = $script:Guids.EnergySaver; Setting = $script:Guids.EnergySaverThreshold; Hyper = @(0, 0); Balance = @(0, 50); Quiet = @(0, 100) },
-    [pscustomobject]@{ Sub = $script:Guids.Sleep; Setting = $script:Guids.StandbyIdle; Hyper = @(0, 900); Balance = @(900, 600); Quiet = @(600, 180) },
-    [pscustomobject]@{ Sub = $script:Guids.Sleep; Setting = $script:Guids.HibernateIdle; Hyper = @(0, 3600); Balance = @(3600, 1800); Quiet = @(1800, 900) },
+    [pscustomobject]@{ Sub = $script:Guids.Sleep; Setting = $script:Guids.StandbyIdle; Hyper = @(10800, 900); Balance = @(10800, 600); Quiet = @(10800, 180) },
+    [pscustomobject]@{ Sub = $script:Guids.Sleep; Setting = $script:Guids.HibernateIdle; Hyper = @(0, 3600); Balance = @(0, 1800); Quiet = @(0, 900) },
     [pscustomobject]@{ Sub = $script:Guids.Buttons; Setting = $script:Guids.LidAction; Hyper = @(1, 1); Balance = @(1, 2); Quiet = @(1, 2) }
 )
 

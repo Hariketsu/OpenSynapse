@@ -2008,6 +2008,16 @@ namespace OpenSynapseNative
             foreach (DISPLAY_DEVICE device in GetActiveDevices())
                 ChangeDisplaySettingsExReset(device.DeviceName, IntPtr.Zero, IntPtr.Zero, 0, IntPtr.Zero);
         }
+
+        public static void RestoreRegistryModes(string[] deviceNames)
+        {
+            if (deviceNames == null || deviceNames.Length == 0)
+                return;
+            HashSet<string> selected = new HashSet<string>(deviceNames, StringComparer.OrdinalIgnoreCase);
+            foreach (DISPLAY_DEVICE device in GetActiveDevices())
+                if (selected.Contains(device.DeviceName))
+                    ChangeDisplaySettingsExReset(device.DeviceName, IntPtr.Zero, IntPtr.Zero, 0, IntPtr.Zero);
+        }
     }
 
     public sealed class DynamicRefreshInfo
@@ -2176,9 +2186,9 @@ namespace OpenSynapseNative
             return result;
         }
 
-        public static int ApplyExternalMaximumRefresh()
+        public static int ApplyInternalMaximumRefresh()
         {
-            return DisplayModeManager.ApplyMaximumRefresh(GetDisplayDeviceNames(false));
+            return DisplayModeManager.ApplyMaximumRefresh(GetDisplayDeviceNames(true));
         }
 
         public static int ApplyInternalFixedRefresh(int targetHz)
@@ -2188,9 +2198,12 @@ namespace OpenSynapseNative
 
         public static int ApplyProfileRefresh(int internalTargetHz)
         {
-            int changed = ApplyExternalMaximumRefresh();
-            changed += ApplyInternalFixedRefresh(internalTargetHz);
-            return changed;
+            return ApplyInternalFixedRefresh(internalTargetHz);
+        }
+
+        public static void RestoreInternalRegistryModes()
+        {
+            DisplayModeManager.RestoreRegistryModes(GetDisplayDeviceNames(true));
         }
 
         private static int RationalHz(RATIONAL value)
@@ -2336,10 +2349,10 @@ namespace OpenSynapseNative
             if (!before.Supported)
                 throw new InvalidOperationException("The internal display path does not support Windows dynamic refresh.");
 
-            int changed = ApplyExternalMaximumRefresh();
+            int changed = 0;
             if (before.Enabled && Math.Abs(before.BaseFrequency - 60) <= 1 && before.BoostFrequency > 60)
                 return changed;
-            changed += DisplayModeManager.ApplyMaximumRefresh(GetDisplayDeviceNames(true));
+            changed += ApplyInternalMaximumRefresh();
             PATH_INFO[] paths;
             MODE_INFO[] modes;
             Query(out paths, out modes);

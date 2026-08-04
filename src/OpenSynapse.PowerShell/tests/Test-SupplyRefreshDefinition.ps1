@@ -84,14 +84,34 @@ foreach ($method in @('ApplyFixedRefresh', 'GetSupportedRefreshRates')) {
     if ($method -notin $nativeMethods) { throw "Missing native refresh method: $method" }
 }
 $dynamicMethods = [OpenSynapseNative.DynamicRefreshManager].GetMethods().Name
-foreach ($method in @('GetStatus', 'GetStatuses', 'RestoreStatus', 'ValidateNativeDynamic', 'EnableNativeDynamic', 'Disable', 'ApplyExternalMaximumRefresh', 'ApplyInternalFixedRefresh', 'ApplyProfileRefresh')) {
+foreach ($method in @('GetStatus', 'GetStatuses', 'RestoreStatus', 'ValidateNativeDynamic', 'EnableNativeDynamic', 'Disable', 'ApplyInternalMaximumRefresh', 'ApplyInternalFixedRefresh', 'ApplyProfileRefresh', 'RestoreInternalRegistryModes')) {
     if ($method -notin $dynamicMethods) { throw "Missing dynamic refresh method: $method" }
 }
+if ('ApplyExternalMaximumRefresh' -in $dynamicMethods) { throw 'External refresh mutation remains exposed by the profile refresh manager.' }
 $dynamicStatus = [OpenSynapseNative.DynamicRefreshManager]::GetStatus()
+
+$externalMode = [pscustomobject]@{ DeviceName = '\\.\DISPLAY2'; MonitorDeviceKey = 'external-key'; Width = 2560; Height = 1440; Frequency = 165; BitsPerPixel = 32; PositionX = 2560; PositionY = 0; Orientation = 0 }
+$internalMode = [pscustomobject]@{ DeviceName = '\\.\DISPLAY1'; MonitorDeviceKey = 'internal-key'; Width = 2560; Height = 1600; Frequency = 240; BitsPerPixel = 32; PositionX = 0; PositionY = 0; Orientation = 0 }
+$displayState = [pscustomobject]@{
+    Modes = @($internalMode, $externalMode)
+    DynamicRefresh = @(
+        [pscustomobject]@{ GdiDeviceName = '\\.\DISPLAY1'; IsInternal = $true },
+        [pscustomobject]@{ GdiDeviceName = '\\.\DISPLAY2'; IsInternal = $false }
+    )
+}
+$externalFingerprint = Get-ExternalDisplayModeFingerprint $displayState
+$internalMode.Frequency = 60
+if ((Get-ExternalDisplayModeFingerprint $displayState) -ne $externalFingerprint) {
+    throw 'An internal refresh change incorrectly altered the external mode fingerprint.'
+}
+$externalMode.Frequency = 240
+if ((Get-ExternalDisplayModeFingerprint $displayState) -eq $externalFingerprint) {
+    throw 'External refresh drift was not detected.'
+}
 
 $mainSource = Get-Content -Raw -LiteralPath $mainScript
 foreach ($required in @(
-    "`$script:AppVersion = '2.5.1'",
+    "`$script:AppVersion = '2.5.2'",
     "New-CustomPlan 'OpenSynapse Balance'",
     'Set-ProfilePolicy Balance $balanceGuid',
     "New-CustomPlan 'OpenSynapse Experiment'",
@@ -99,9 +119,15 @@ foreach ($required in @(
     "@('HyperPlanGuid', 'BalancePlanGuid', 'QuietPlanGuid', 'ExperimentPlanGuid')",
     "'Fixed60' { [OpenSynapseNative.DynamicRefreshManager]::ApplyProfileRefresh(60); break }",
     "'Fixed240' { [OpenSynapseNative.DynamicRefreshManager]::ApplyProfileRefresh(240); break }",
-    'ApplyExternalMaximumRefresh()'
+    'ApplyInternalMaximumRefresh()',
+    'external display refresh is unmanaged'
 )) {
     if ($mainSource.IndexOf($required, [StringComparison]::Ordinal) -lt 0) { throw "Missing install/upgrade/rollback definition: $required" }
+}
+if ($mainSource.IndexOf('ApplyExternalMaximumRefresh', [StringComparison]::Ordinal) -ge 0 -or
+    $mainSource.IndexOf('External refresh verification failed', [StringComparison]::Ordinal) -ge 0 -or
+    $mainSource.IndexOf('[OpenSynapseNative.DisplayModeManager]::RestoreRegistryModes()', [StringComparison]::Ordinal) -ge 0) {
+    throw 'The runtime still contains an external refresh mutation or verification path.'
 }
 
 $result = [pscustomobject]@{
@@ -117,6 +143,8 @@ $result = [pscustomobject]@{
     BalanceInstallUpgradeRollbackDefined = $true
     InternalDisplayActive = [bool]$dynamicStatus.InternalDisplayActive
     DynamicRefreshSupported = [bool]$dynamicStatus.Supported
+    ExternalRefreshUnmanaged = $true
+    ExternalRefreshDriftDetected = $true
     ChangedSystemSettings = $false
     CompletedAt = (Get-Date).ToString('o')
 }

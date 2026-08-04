@@ -181,12 +181,14 @@ public static class DynamicRefreshManager
         return names.ToArray();
     }
 
-    public static int ApplyExternalMaximumRefresh() =>
-        DisplayModeManager.ApplyMaximumRefresh(GetDisplayDeviceNames(false));
+    public static int ApplyInternalMaximumRefresh() =>
+        DisplayModeManager.ApplyMaximumRefresh(GetDisplayDeviceNames(true));
 
     public static int ApplyProfileRefresh(int internalTargetHz) =>
-        ApplyExternalMaximumRefresh()
-        + DisplayModeManager.ApplyFixedRefresh(internalTargetHz, GetDisplayDeviceNames(true));
+        DisplayModeManager.ApplyFixedRefresh(internalTargetHz, GetDisplayDeviceNames(true));
+
+    public static void RestoreInternalRegistryModes() =>
+        DisplayModeManager.RestoreRegistryModes(GetDisplayDeviceNames(true));
 
     private static int RationalHz(Rational value) => value.Denominator == 0
         ? 0
@@ -250,10 +252,10 @@ public static class DynamicRefreshManager
         if (!before.Supported)
             throw new InvalidOperationException("The internal display path does not support Windows dynamic refresh.");
 
-        var changed = ApplyExternalMaximumRefresh();
+        var changed = 0;
         if (before.Enabled && Math.Abs(before.BaseFrequency - 60) <= 1 && before.BoostFrequency > 60)
             return changed;
-        changed += DisplayModeManager.ApplyMaximumRefresh(GetDisplayDeviceNames(true));
+        changed += ApplyInternalMaximumRefresh();
         Query(out var paths, out var modes);
         for (var index = 0; index < paths.Length; index++)
         {
