@@ -1,129 +1,138 @@
-[English](README.md) | [简体中文](README.zh-CN.md)
-
 # OpenSynapse
 
-[![Build](https://github.com/Hariketsu/OpenSynapse/actions/workflows/build.yml/badge.svg)](https://github.com/Hariketsu/OpenSynapse/actions/workflows/build.yml)
+[![Build](https://github.com/Hariketsu/OpenSynapse/actions/workflows/build.yml/badge.svg)](https://github.com/Hariketsu/OpenSynapse/actions/workflows/build.yml) [简体中文](README.zh-CN.md)
 
-OpenSynapse is a local-first, open-source Windows control center for supported Razer hardware and system policies. Its goal is to replace opaque background software with explicit capabilities, inspectable state changes, and reliable rollback.
+OpenSynapse is a local-first Windows control center for power, display, automation, and selected Razer HID capabilities. It applies explicit policies, records inspectable local state, and keeps a rollback path for the system state it changes.
 
-> [!WARNING]
-> The power/display runtime is now based directly on the field-tested PowerPilot 2.4.1 implementation. DeathAdder writes remain hardware-gated and still require verification on a connected target device. Keep Razer Synapse closed while testing device control.
+> **Version 0.2.0 is the first public release target.** It is intended to be a narrowly supported preview, not a universal gaming-laptop control utility.
 
-## Principles
+## Is this for you?
 
-- **Local-first:** no account, cloud service, telemetry, or runtime network access.
-- **Explicit:** every supported capability has a known identity, protocol, and safety boundary.
-- **Reversible:** system state is captured before OpenSynapse changes it and retained until confirmed restoration.
-- **Capability-gated:** unknown devices and unsupported commands are not treated as compatible.
-- **Small:** Windows and .NET facilities are preferred over resident services and dependency-heavy frameworks.
+OpenSynapse currently targets Windows 11 systems where power and display behavior needs to be observable and reversible. The primary validation environment is a Razer Blade 16 (2025), model `RZ09-0528`.
 
-## Project status
-
-OpenSynapse currently implements the M0–M3 development slice. Implementation does not mean hardware verification; see the [roadmap](ROADMAP.md) for the gates between experimental and supported status.
-
-| Area | Current capability | Maturity |
+| Area | Available in 0.2.0 | Evidence and boundary |
 | --- | --- | --- |
-| Windows policies | Adapter-aware Auto, Hyper, Balance, and Quiet selection; power plans; refresh rate; Advanced Color/HDR; internal brightness; display scaling; optional wake-device control | Live installation validated on the target RZ09-0528 |
-| State restoration | Atomic captured state, legacy .NET rollback, PowerPilot takeover, and verified power-plan rollback | Migration validated on the target system |
-| Desktop control | Single elevated PowerShell 5.1/WinForms tray process, installed as a delayed highest-privilege per-user task | Installed and live-validated |
-| Razer mouse | Discovery, status, DPI, and standard-receiver polling control | Experimental |
+| Power policies | Auto, Hyper, Balance, and Quiet; power-plan and battery-aware automation | Validated on the target system; policy values are hardware and firmware dependent |
+| Smart Auto | Application, fullscreen, CPU/GPU load, supply classification, and hysteresis signals | Falls back conservatively when hardware evidence is unavailable |
+| Display policies | Refresh rate, HDR/Advanced Color, internal brightness, and scaling | Validated on the target system; external-display behavior is intentionally limited |
+| Recovery | Captured state, atomic local files, and uninstall/exit restoration | Intended to restore tracked state; review the safety notes before installation |
+| Razer mouse | DeathAdder V3 Pro discovery, status, DPI, and standard-receiver polling control | Experimental until a connected target device completes read/write verification |
 
-### Device matrix
+### Not supported
 
-| Device | VID:PID | Connection | Implemented | Verified |
-| --- | --- | --- | --- | --- |
-| Razer DeathAdder V3 Pro | `1532:00B6` | Wired | Status, DPI, 125/500/1000 Hz | Pending |
-| Razer DeathAdder V3 Pro | `1532:00B7` | Wireless receiver | Status, DPI, 125/500/1000 Hz | Pending |
-| Razer DeathAdder V3 Pro (alternate IDs) | `1532:00C2`, `1532:00C3` | Wired / wireless | Status, DPI, 125/500/1000 Hz | Pending |
-| Razer HyperPolling Wireless Dongle | — | Wireless | Not implemented | — |
+Firmware updates, fan curves, CPU/GPU power limits, MUX switching, undocumented embedded-controller writes, kernel drivers, cloud accounts, automatic updates, and runtime network services are outside the current scope.
 
-“Pending” means the protocol path exists and is tested at the packet level, but the project does not yet claim hardware support. Firmware updates, fan curves, CPU/GPU power limits, MUX control, and undocumented EC writes are outside the current scope.
+## Screenshots
 
-## Architecture
+These screenshots show a target-machine session and its instantaneous telemetry. They illustrate the UI; their power, battery, display, and GPU values are not universal defaults.
 
-The release runtime intentionally follows PowerPilot 2.4.1's proven single-process model:
+### Dashboard
 
-```text
-OpenSynapse scheduled task (highest privileges, STA)
-        │
-        └─ OpenSynapse.ps1 (WinForms UI, tray, automation)
-                └─ dynamically compiled OpenSynapse.Native.cs
-                        ├─ display, battery and GPU telemetry
-                        ├─ Windows policy APIs / powercfg
-                        └─ capability-gated DeathAdder HID reports
-```
+![OpenSynapse dashboard](docs/screenshots/dashboard-smart-automation.png)
 
-This removes the WPF-to-Agent startup and named-pipe failure mode that made the previous migration appear online while its control backend was unavailable. See [Architecture](docs/ARCHITECTURE.md).
+### Game Mode
 
-## Build and test
+![OpenSynapse Game Mode](docs/screenshots/game-mode-smart-auto.png)
 
-Requirements:
+### Settings
 
-- Windows 11
-- Windows PowerShell 5.1
-- Administrator approval for installation and policy changes
+![OpenSynapse settings](docs/screenshots/settings-power-display-and-razer.png)
+
+The settings screenshot shows the safe state when no supported DeathAdder V3 Pro is connected. HID writes remain disabled until an exact allowlisted device is detected.
+
+### Diagnostics
+
+![OpenSynapse diagnostics](docs/screenshots/diagnostics-live-telemetry.png)
+
+### About and recovery
+
+![OpenSynapse about page](docs/screenshots/about-version-and-safety.png)
+
+Closing the window hides the control panel. **Exit and restore** is the operation that stops the tray runtime and restores tracked state.
+
+## Quick start
+
+### Requirements
+
+- Windows 11;
+- Windows PowerShell 5.1;
+- administrator approval for installation and policy changes;
+- a disposable or fully understood system for preview testing;
+- Razer Synapse closed while testing Razer HID control.
+
+### Preview package
+
+The first public package will be attached to the GitHub Release for `0.2.0` together with release notes and a SHA-256 checksum. Until that Release exists, the repository is source-first and does not provide a supported download path.
+
+### Build from source
+
+From a Windows PowerShell 5.1 prompt:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\Test-InstallerDefinitions.ps1
 powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1
-```
-
-The retained .NET solution contains protocol/unit-test code from the previous implementation and can still be tested separately, but it is no longer the published desktop runtime.
-
-### Publish and install
-
-Create the renamed PowerPilot-compatible package, then install it:
-
-```powershell
 powershell -ExecutionPolicy Bypass -File scripts\Publish-OpenSynapse.ps1
-powershell -ExecutionPolicy Bypass -File scripts\Install-OpenSynapse.ps1
 ```
 
-The package is written to `artifacts\publish\OpenSynapse` and `artifacts\OpenSynapse-2.4.2.zip`. The installer first asks the obsolete .NET Agent to restore its captured state when that binary is available; otherwise it restores the legacy power, display, brightness and wake state directly. If an installed PowerPilot runtime exists, its configuration and recovery state are archived, its own verified uninstaller restores Windows, and that configuration is promoted to OpenSynapse. The installer then removes the obsolete split runtime, copies the PowerShell implementation under `%ProgramFiles%\OpenSynapse`, registers one delayed highest-privilege per-user task, and creates an OpenSynapse Start menu shortcut. To uninstall and restore the captured state:
+The package is generated under `artifacts\publish\OpenSynapse` and `artifacts\OpenSynapse-0.2.0.zip`.
+
+### Install and restore
+
+From an extracted package:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\Uninstall-OpenSynapse.ps1
+powershell -ExecutionPolicy Bypass -File .\OpenSynapse.ps1 -Mode Install
+powershell -ExecutionPolicy Bypass -File .\OpenSynapse.ps1 -Mode Status
+powershell -ExecutionPolicy Bypass -File .\OpenSynapse.ps1 -Mode SelfTest
+powershell -ExecutionPolicy Bypass -File .\OpenSynapse.ps1 -Mode Uninstall
 ```
 
-On a disposable or fully understood Windows configuration, run the full reversible administrator suite:
+Installation creates a delayed, highest-privilege per-user scheduled task and stores local configuration and rollback state under `%LOCALAPPDATA%\OpenSynapse`. Review the generated state before using the preview on a machine you cannot restore.
+
+For a full reversible administrator check on a disposable system:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1 -AdminRelease
+```
 
-# Optional: re-write the mouse's currently reported values to verify HID transport.
+The optional mouse-write check requires a connected, readable DeathAdder V3 Pro and writes its currently reported values back without choosing new values:
+
+```powershell
 powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1 -TestMouseWrites
 ```
 
-The mouse option requires a readable DeathAdder V3 Pro and writes its currently reported values back without intentionally choosing new settings.
-
-## Configuration
-
-The tray runtime stores policy in `%LOCALAPPDATA%\OpenSynapse\config.json` and rollback state in `state.json`. It retains PowerPilot 2.4.1's Smart Auto, application rules, supply debounce, display policy, battery telemetry, health backoff, and reversible state model.
-
-The PowerPilot-compatible defaults enable Quiet maintenance. Wake devices are matched by configured name fragments (initially MediaTek Wi-Fi, HID-compliant mouse, and USB4); tracked permissions are restored when leaving Quiet, exiting, or uninstalling. Quiet may also close configured high-drain helper processes and pause configured Armoury Crate/ASUS services. Review these lists in `config.json` if those applications or devices must remain active.
-
 ## Safety and privacy
 
-- Razer writes require an exact supported VID/PID and Consumer HID usage page.
-- DPI and polling inputs are validated before packet construction.
-- Responses must match the request transaction, command class, command ID, and checksum.
-- The installed runtime runs as a single per-user highest-privilege scheduled task; no named-pipe IPC is required.
-- Configuration and captured system state are stored separately and atomically under `%LOCALAPPDATA%\OpenSynapse`.
-- Quiet wake-device and service changes retain rollback state; configured process termination is limited to the local allowlists inherited from PowerPilot.
-- Runtime events are written locally to bounded `OpenSynapse.log` and `telemetry.jsonl` files.
-- Adapter classification invokes `nvidia-smi` with a read-only query and fails safe to Quiet when the power limit cannot be verified.
-- The current implementation contains no telemetry, analytics, updater, account system, or runtime network client.
+- Runtime operation is local-only; there is no account, cloud service, analytics client, updater, or required network connection.
+- The installed runtime is one elevated PowerShell 5.1/WinForms tray process; it does not install a kernel driver.
+- Configuration and captured state are separate atomic files under `%LOCALAPPDATA%\OpenSynapse`.
+- Razer writes require VID `1532`, an exact supported PID, and the Consumer HID usage page. DPI and polling values are validated before packet construction, and responses are checked against the request and checksum.
+- Quiet wake-device, service, and helper-process actions use local allowlists and retain rollback state. Review those lists before installation.
+- `nvidia-smi` is used only for read-only adapter evidence. Missing or ambiguous evidence fails safe instead of promoting a performance policy.
+- A matching product name does not make a device supported. The DeathAdder V3 Pro PID `02C6` found in the target laptop is an internal keyboard, not a supported mouse interface.
 
-Please report security issues through the private process in [SECURITY.md](SECURITY.md), not a public issue.
+## Known limitations
+
+- Hyper reaches its intended maximum-output policy only after verified high-power AC evidence. USB-C PD, battery, and ambiguous AC remain input-power limited.
+- External-display refresh behavior is deliberately constrained; the project does not claim general external-monitor refresh control.
+- DeathAdder V3 Pro hardware read/write verification is still pending for the allowlisted wired and receiver PIDs.
+- Installation and rollback evidence currently covers the named target environment, not every Windows 11 laptop, GPU, monitor, or firmware combination.
+- A display link or monitor-controller failure cannot always be repaired by user-mode software. The runtime detects missing or unstable evidence and avoids force-writing an unsafe topology.
+
+## Documentation
+
+- [Architecture](docs/ARCHITECTURE.md)
+- [Roadmap and maturity gates](ROADMAP.md)
+- [Changelog](src/OpenSynapse.PowerShell/CHANGELOG.md)
+- [Contribution guide](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Code of Conduct](CODE_OF_CONDUCT.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ## Contributing
 
-Start with [CONTRIBUTING.md](CONTRIBUTING.md), the [roadmap](ROADMAP.md), and the [Code of Conduct](CODE_OF_CONDUCT.md). Hardware contributions must include reproducible identity and verification evidence; a matching product name alone is not enough to mark a device supported.
-
-OpenSynapse began as a migration from the PowerPilot 2.0.0 prototype. Development-only prototype and protocol references belong under the ignored `ref/` directory and are never required to build the project.
+Hardware contributions must include reproducible device identity and verification evidence. A matching product name alone is not sufficient to mark a device supported. Start with the contribution guide and the roadmap before changing a capability boundary.
 
 ## License and trademarks
 
-OpenSynapse is licensed under [GNU GPL v2 only (`GPL-2.0-only`)](LICENSE). Third-party provenance is recorded in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-OpenSynapse is an independent community project and is not affiliated with, endorsed by, or sponsored by Razer Inc. Razer, Razer Synapse, and related product names are trademarks of their respective owners.
+OpenSynapse is licensed under [GNU GPL v2 only (`GPL-2.0-only`)](LICENSE). It is an independent community project and is not affiliated with, endorsed by, or sponsored by Razer Inc. Razer, Razer Synapse, and related product names are trademarks of their respective owners.

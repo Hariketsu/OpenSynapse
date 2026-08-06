@@ -33,5 +33,22 @@ jobs:
       - run: dotnet format OpenSynapse.sln --verify-no-changes --no-restore
       - run: dotnet build OpenSynapse.sln --configuration Release --no-restore
       - run: dotnet test OpenSynapse.sln --configuration Release --no-build --no-restore
-      - shell: powershell
+      - name: Publish OpenSynapse
+        shell: powershell
         run: .\scripts\Publish-OpenSynapse.ps1
+      - name: Hash release package
+        shell: powershell
+        run: |
+          $zip = Join-Path $PWD 'artifacts\OpenSynapse-0.2.0.zip'
+          if (-not (Test-Path -LiteralPath $zip -PathType Leaf)) {
+            throw "Release package was not created: $zip"
+          }
+          $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash
+          "$hash  $([IO.Path]::GetFileName($zip))" | Set-Content -LiteralPath "${zip}.sha256" -Encoding ascii
+      - uses: actions/upload-artifact@v4
+        with:
+          name: OpenSynapse-0.2.0
+          if-no-files-found: error
+          path: |
+            artifacts/OpenSynapse-0.2.0.zip
+            artifacts/OpenSynapse-0.2.0.zip.sha256

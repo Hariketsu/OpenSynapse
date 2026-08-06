@@ -16,7 +16,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $script:AppName = 'OpenSynapse'
-$script:AppVersion = '2.4.2'
+$script:AppVersion = '0.2.0'
 $script:AppUserModelId = 'OpenSynapse.Desktop'
 $script:TaskName = 'OpenSynapse'
 $script:LegacyAgentTaskName = 'OpenSynapse Agent'
@@ -3938,7 +3938,7 @@ function Start-TrayApplication {
     Set-RazerButtonStyle $restoreButton $false
     $pageAbout.Controls.Add($restoreButton)
     $aboutVersion = New-Object Windows.Forms.Label
-    $aboutVersion.Text = 'Power / automation core preserved from 2.3.1'
+    $aboutVersion.Text = 'OpenSynapse 0.2.0 public preview'
     $aboutVersion.Location = New-Object Drawing.Point(484, 540)
     $aboutVersion.Size = New-Object Drawing.Size(420, 32)
     $aboutVersion.ForeColor = $script:TextMuted

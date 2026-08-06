@@ -153,7 +153,7 @@ $result = [pscustomobject]@{
 if (-not ($result.TaskState -eq 'Running' -and $result.TaskRunLevel -eq 'Highest' -and $result.TaskActionProtected -and $result.TaskLogonDelay -eq 'PT30S' -and $result.AllowBattery -and
     $result.DontStopOnBattery -and $result.TrayAliveAndMatched -and $result.TrayDpiMode -eq 'PerMonitorV2' -and
     $result.TrayDpiAwareness -eq 2 -and $result.TrayAppUserModelId -eq $script:AppUserModelId -and
-    $result.StateVersion -eq 10 -and $result.ConfigVersion -eq 11 -and $result.RuntimeVersion -eq '2.4.2' -and $result.ActiveProfileAllowed -and
+    $result.StateVersion -eq 10 -and $result.ConfigVersion -eq 11 -and $result.RuntimeVersion -eq '0.2.0' -and $result.ActiveProfileAllowed -and
     $result.InstalledPowerValuesVerified -eq 78 -and $result.EmptyStateArraysValid -and $result.ShortcutExists -and
     $result.IconFilesExist -and $result.IconFilesMatchPackage -and $result.ShortcutUsesOpenSynapseIcon -and $result.ShortcutUsesOpenSynapseIdentity -and
     $result.PostStartApplyFailures -eq 0 -and $result.InstalledMatchesPackage)) {

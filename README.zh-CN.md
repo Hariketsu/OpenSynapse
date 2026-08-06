@@ -1,116 +1,138 @@
-[English](README.md) | [简体中文](README.zh-CN.md)
-
 # OpenSynapse
 
-[![构建](https://github.com/Hariketsu/OpenSynapse/actions/workflows/build.yml/badge.svg)](https://github.com/Hariketsu/OpenSynapse/actions/workflows/build.yml)
+[![构建](https://github.com/Hariketsu/OpenSynapse/actions/workflows/build.yml/badge.svg)](https://github.com/Hariketsu/OpenSynapse/actions/workflows/build.yml) [English](README.md)
 
-OpenSynapse 是一个本地优先的开源 Windows 控制中心，用于管理受支持的 Razer 硬件和系统策略。项目的目标是用能力明确、状态变化可检查、可靠回滚的开放实现，替代不透明的常驻软件。
+OpenSynapse 是一个本地优先的 Windows 控制中心，用于管理电源、显示、自动化和部分 Razer HID 能力。它应用明确的系统策略，记录可检查的本地状态，并为已修改的系统状态保留恢复路径。
 
-> [!WARNING]
-> 电源与显示运行时现已直接建立在实机验证过的 PowerPilot 2.4.1 上。DeathAdder 写入仍受硬件白名单保护，并需要连接目标设备完成实测。测试设备控制时，请关闭 Razer Synapse。
+> **0.2.0 是首个公开版本目标。** 这是一个有明确适用范围的预览版，不是通用的游戏本控制工具。
 
-## 项目原则
+## 适合谁使用
 
-- **本地优先：** 不需要账户、云服务或遥测，运行时不访问网络。
-- **能力明确：** 每项受支持能力都有明确的设备身份、协议和安全边界。
-- **可恢复：** OpenSynapse 修改系统前会捕获原始状态，并保留到确认恢复成功为止。
-- **能力门控：** 未知设备和未支持命令不会被模糊地视为“兼容”。
-- **保持精简：** 优先使用 Windows 和 .NET 原生能力，避免臃肿的常驻服务和依赖框架。
+OpenSynapse 面向需要观察并可恢复电源、显示行为的 Windows 11 系统。当前主要验证环境是 Razer Blade 16（2025），型号 `RZ09-0528`。
 
-## 当前状态
-
-OpenSynapse 已实现 M0–M3 开发切片。完成代码实现不等于通过硬件验证；实验能力升级为正式支持所需的门槛见[路线图](ROADMAP.md)。
-
-| 领域 | 当前能力 | 成熟度 |
+| 领域 | 0.2.0 可用能力 | 证据与边界 |
 | --- | --- | --- |
-| Windows 策略 | Smart Auto、Hyper、Balance、Quiet；电源方案、刷新率、Advanced Color/HDR、内屏亮度和显示缩放 | 已在目标 RZ09-0528 完成真实安装验证 |
-| Smart Auto | 供电、CPU/GPU、前台/全屏应用、应用规则、迟滞、临时模式、dGPU 连续活动诊断 | 已实现；GPU 不可用时安全回退到 CPU/窗口信号 |
-| 状态恢复 | 原始状态原子保存、旧 .NET 恢复、PowerPilot 接管与电源方案恢复验证 | 已在目标系统完成迁移验证 |
-| 桌面控制 | 单个提权的 PowerShell 5.1/WinForms 托盘进程，通过延迟且最高权限的当前用户计划任务启动 | 已安装并完成现场验证 |
-| Razer 鼠标 | 设备发现、状态、DPI 和标准接收器轮询率控制 | 实验性 |
+| 电源策略 | Auto、Hyper、Balance、Quiet；电源方案与电池感知自动化 | 已在目标系统验证；策略值受硬件和固件影响 |
+| Smart Auto | 应用、全屏、CPU/GPU 负载、供电分类与迟滞信号 | 缺少硬件证据时会保守回退 |
+| 显示策略 | 刷新率、HDR/Advanced Color、内屏亮度和缩放 | 已在目标系统验证；外接显示器行为有明确限制 |
+| 状态恢复 | 原始状态捕获、本地原子文件、卸载/退出恢复 | 目标是恢复已追踪状态；安装前请阅读安全说明 |
+| Razer 鼠标 | DeathAdder V3 Pro 发现、状态、DPI 和标准接收器轮询率控制 | 在连接目标设备完成读写验证前，保持实验性 |
 
-### 设备矩阵
+### 当前不支持
 
-| 设备 | VID:PID | 连接方式 | 已实现 | 已验证 |
-| --- | --- | --- | --- | --- |
-| Razer DeathAdder V3 Pro | `1532:00B6` | 有线 | 状态、DPI、125/500/1000 Hz | 待验证 |
-| Razer DeathAdder V3 Pro | `1532:00B7` | 无线接收器 | 状态、DPI、125/500/1000 Hz | 待验证 |
-| Razer DeathAdder V3 Pro（备用 ID） | `1532:00C2`、`1532:00C3` | 有线 / 无线 | 状态、DPI、125/500/1000 Hz | 待验证 |
-| Razer HyperPolling Wireless Dongle | — | 无线 | 未实现 | — |
+固件更新、风扇曲线、CPU/GPU 功耗限制、MUX 切换、未公开 EC 写入、内核驱动、云端账户、自动更新和运行时网络服务不在当前范围内。
 
-“待验证”表示协议路径已经实现并通过报文级测试，但项目尚不宣称硬件支持。固件更新、风扇曲线、CPU/GPU 功耗限制、MUX 控制和未公开 EC 写入不在当前范围内。
+## 项目截图
 
-## 架构
+以下截图来自目标设备的一次运行，展示的是 UI 和当时的瞬时遥测；其中的电源、电池、显示和 GPU 数值不是通用默认值。
 
-发布版现在沿用 PowerPilot 2.4.1 已验证的单进程模型：
+### 控制面板
 
-```text
-OpenSynapse 计划任务（最高权限、STA）
-        │
-        └─ OpenSynapse.ps1（WinForms UI、托盘、自动化）
-                └─ 动态编译 OpenSynapse.Native.cs
-                        ├─ 显示、电池和 GPU 遥测
-                        ├─ Windows 策略 API / powercfg
-                        └─ 受白名单保护的 DeathAdder HID 报告
-```
+![OpenSynapse 控制面板](docs/screenshots/dashboard-smart-automation.png)
 
-这样移除了上一版 WPF 与 Agent 之间的启动、UAC 和命名管道故障点。详情见[架构文档](docs/ARCHITECTURE.md)。
+### 游戏模式
 
-## 构建与测试
+![OpenSynapse 游戏模式](docs/screenshots/game-mode-smart-auto.png)
 
-要求：
+### 设置
 
-- Windows 11
-- Windows PowerShell 5.1
-- 安装和系统策略变更需要管理员确认
+![OpenSynapse 设置](docs/screenshots/settings-power-display-and-razer.png)
+
+设置截图显示了未连接受支持 DeathAdder V3 Pro 时的安全状态。只有检测到精确白名单设备后，HID 写入才会启用。
+
+### 诊断
+
+![OpenSynapse 诊断](docs/screenshots/diagnostics-live-telemetry.png)
+
+### 关于与恢复
+
+![OpenSynapse 关于页面](docs/screenshots/about-version-and-safety.png)
+
+关闭窗口只会隐藏控制面板。**Exit and restore** 才会停止托盘运行时并恢复已追踪的状态。
+
+## 快速开始
+
+### 要求
+
+- Windows 11；
+- Windows PowerShell 5.1；
+- 安装和系统策略变更需要管理员确认；
+- 建议使用可随时恢复、配置完全明确的系统进行预览测试；
+- 测试 Razer HID 控制时请关闭 Razer Synapse。
+
+### 预览包
+
+首个公开包将作为 GitHub `0.2.0` Release 附件发布，同时提供发布说明和 SHA-256 校验值。在 Release 建立之前，仓库以源码为主，不提供受支持的下载路径。
+
+### 从源码构建
+
+在 Windows PowerShell 5.1 中运行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\Test-InstallerDefinitions.ps1
 powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1
+powershell -ExecutionPolicy Bypass -File scripts\Publish-OpenSynapse.ps1
 ```
 
-保留的 .NET 解决方案仍包含上一版实现的协议和单元测试代码，但不再作为发布版桌面运行时。
+发布目录为 `artifacts\publish\OpenSynapse`，压缩包为 `artifacts\OpenSynapse-0.2.0.zip`。
 
-发布并安装：
+### 安装与恢复
+
+从解压后的发布目录运行：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\Publish-OpenSynapse.ps1
-powershell -ExecutionPolicy Bypass -File scripts\Install-OpenSynapse.ps1
+powershell -ExecutionPolicy Bypass -File .\OpenSynapse.ps1 -Mode Install
+powershell -ExecutionPolicy Bypass -File .\OpenSynapse.ps1 -Mode Status
+powershell -ExecutionPolicy Bypass -File .\OpenSynapse.ps1 -Mode SelfTest
+powershell -ExecutionPolicy Bypass -File .\OpenSynapse.ps1 -Mode Uninstall
 ```
 
-发布结果位于 `artifacts\publish\OpenSynapse` 和 `artifacts\OpenSynapse-2.4.2.zip`。如果旧 .NET Agent 仍存在，安装器会先调用它恢复已捕获状态；如果旧二进制已不存在，则直接恢复旧状态中的电源计划、显示、亮度和唤醒权限。如果检测到已安装且正在运行的 PowerPilot，安装器会归档它的配置和恢复状态，调用 PowerPilot 自身的卸载流程恢复 Windows，并把用户配置提升为 OpenSynapse 配置。随后才会清理旧运行时、安装 `%ProgramFiles%\OpenSynapse`、注册唯一的最高权限当前用户任务并创建开始菜单快捷方式。
+安装会创建一个延迟启动、最高权限、当前用户范围的计划任务，并把配置和回滚状态存放在 `%LOCALAPPDATA%\OpenSynapse`。预览版安装到无法恢复的机器前，请先检查生成的状态文件。
 
-在可随时恢复、配置完全明确的 Windows 环境中运行完整管理员测试：
+在可恢复的测试系统上运行完整管理员套件：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1 -AdminRelease
+```
 
-# 可选：把鼠标当前报告的数值写回，用于验证 HID 传输。
+可选的鼠标写入检查需要连接并可读取的 DeathAdder V3 Pro；它会把设备当前报告的数值写回，不会主动选择新参数：
+
+```powershell
 powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1 -TestMouseWrites
 ```
 
-鼠标选项需要可读取的 DeathAdder V3 Pro，并把当前值写回，不会主动选择新的参数。
-
 ## 安全与隐私
 
-- Razer 写入要求精确匹配受支持的 VID/PID 和 Consumer HID Usage Page。
-- DPI 和轮询率在构造报文前完成验证。
-- 响应必须匹配事务、命令类、命令 ID 和校验和。
-- 安装版以当前用户的最高权限计划任务单进程运行，不再依赖命名管道 IPC。
-- 捕获的系统状态原子保存到 `%LOCALAPPDATA%\OpenSynapse`。
-- PowerPilot 兼容默认值会在 Quiet 中按配置维护高耗电辅助进程、Armoury Crate/ASUS 服务和唤醒设备；需要保持常驻的项目应先从 `config.json` 白名单中移除。
-- 当前实现只读取本机电池、CPU、前台窗口和 Windows GPU 性能计数器遥测；不包含云分析、自动更新、账户系统或运行时网络客户端。GPU 采样在后台线程运行，电池趋势写入本地 30 秒 JSONL 历史。
+- 运行时仅在本地工作；不包含账户、云服务、分析客户端、自动更新器或必需的网络连接。
+- 安装版是一个提权的 PowerShell 5.1/WinForms 托盘进程，不安装内核驱动。
+- 配置和捕获状态分开保存为 `%LOCALAPPDATA%\OpenSynapse` 下的原子文件。
+- Razer 写入要求 VID `1532`、精确支持的 PID 和 Consumer HID Usage Page。DPI 与轮询率在构造报文前验证，响应会校验请求和校验和。
+- Quiet 的唤醒设备、服务和辅助进程操作使用本地白名单并保留恢复状态。安装前请检查这些列表。
+- `nvidia-smi` 只用于读取适配器证据。证据缺失或含糊时会安全回退，不会擅自提升到性能策略。
+- 产品名称相同不代表设备已支持。目标笔记本中发现的 DeathAdder PID `02C6` 实际属于内置键盘，不是受支持的鼠标接口。
 
-安全问题请按 [SECURITY.md](SECURITY.md) 中的私密流程报告，不要创建公开 Issue。
+## 已知限制
+
+- 只有在确认高功率 AC 后，Hyper 才会执行预期的最大输出策略。USB-C PD、电池和未确认 AC 会受输入功率限制。
+- 外接显示器刷新行为受到明确限制；项目不宣称通用的外屏刷新率控制。
+- 白名单中的 DeathAdder V3 Pro 有线和接收器 PID 仍待完成真实硬件读写验证。
+- 安装和回滚证据目前覆盖命名的目标环境，不代表所有 Windows 11 笔记本、GPU、显示器或固件组合。
+- 显示链路或显示器控制器故障不一定能由用户态软件修复。运行时会检测缺失或不稳定证据，并避免对不安全的拓扑强写。
+
+## 文档
+
+- [架构说明](docs/ARCHITECTURE.md)
+- [路线图与成熟度门槛](ROADMAP.md)
+- [变更记录](src/OpenSynapse.PowerShell/CHANGELOG.md)
+- [贡献指南](CONTRIBUTING.md)
+- [安全策略](SECURITY.md)
+- [行为准则](CODE_OF_CONDUCT.md)
+- [第三方声明](THIRD_PARTY_NOTICES.md)
 
 ## 参与贡献
 
-请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md)、[路线图](ROADMAP.md)和[行为准则](CODE_OF_CONDUCT.md)。硬件贡献必须提供可复现的设备身份和验证证据；只有相同产品名称不足以将设备标记为受支持。
-
-OpenSynapse 最初由 PowerPilot 2.0.0 原型迁移而来。仅供开发使用的原型和协议参考项目应放在已忽略的 `ref/` 目录，项目构建不得依赖其中的文件。
+硬件贡献必须提供可复现的设备身份和验证证据。只有产品名称相同不足以将设备标记为受支持。修改能力边界前，请先阅读贡献指南和路线图。
 
 ## 许可证与商标
 
-OpenSynapse 使用 [GNU GPL v2 only（`GPL-2.0-only`）](LICENSE)许可证。第三方来源记录在 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
-
-OpenSynapse 是独立社区项目，与 Razer Inc. 不存在附属、认可或赞助关系。Razer、Razer Synapse 及相关产品名称是其各自所有者的商标。
+OpenSynapse 使用 [GNU GPL v2 only（`GPL-2.0-only`）](LICENSE)许可证。它是独立社区项目，与 Razer Inc. 不存在附属、认可或赞助关系。Razer、Razer Synapse 及相关产品名称是其各自所有者的商标。

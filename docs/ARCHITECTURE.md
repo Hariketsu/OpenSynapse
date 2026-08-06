@@ -2,7 +2,7 @@
 
 ## Release runtime
 
-OpenSynapse 2.4.2 uses the PowerPilot 2.4.1 execution model because that model has already passed the target-machine installation, power-policy, display, DPI and stability test suite.
+OpenSynapse 0.2.0 uses the single-process Windows PowerShell 5.1 execution model because it has already passed the target-machine installation, power-policy, display, DPI and stability test suite.
 
 ```mermaid
 flowchart TD
@@ -71,7 +71,7 @@ Configuration and rollback state are separate under `%LOCALAPPDATA%\OpenSynapse`
 - `OpenSynapse.log` records bounded local events;
 - `telemetry.jsonl` stores the rotating local telemetry history.
 
-The runtime retains PowerPilot 2.4.1's atomic JSON replacement and `.bak` recovery behavior. A transient monitor failure does not switch profiles blindly: the last verified plan is preserved and monitoring backs off through 10/20/40/60-second retries.
+The runtime uses atomic JSON replacement and `.bak` recovery behavior. A transient monitor failure does not switch profiles blindly: the last verified plan is preserved and monitoring backs off through 10/20/40/60-second retries.
 
 ## Test boundary
 

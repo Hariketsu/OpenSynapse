@@ -1,10 +1,8 @@
-# OpenSynapse 2.4.2 重新移植验证报告
+# OpenSynapse 0.2.0 验证报告
 
-验证日期：2026-07-25
-分支：`dev-echo`
-参考：`ref/PowerPilot2.4.1`
+本文件记录目标设备上的历史验证证据。证据日期为 2026-07-25 至 2026-07-27；公开版本号重置为 0.2.0 后，发布前仍必须在同一提交上重新运行 CI、打包和安装态检查。
 
-## 2026-07-27 Quiet 2.4.2 发布与本机安装验证
+## 目标设备验证
 
 - Ryzen AI 9 365 Quiet DC 曲线：`>=70%` 为 CPU 65% / EPP 90，`30–69%` 为 CPU 60% / EPP 95，`<30%` 为 CPU 50% / EPP 100：通过；
 - 手动 Quiet 在电池、PD 和持续 280W 供电期间保持锁定，不推进 Smart Auto；仅检测到新的 280W 级 `HighPowerAC` 接入时解除锁定并恢复 Auto：通过；
@@ -12,11 +10,10 @@
 - 非管理员定义/运行时里程碑测试：21/21 通过；
 - 管理员发布测试：24/24 通过，包含临时计划任务与电源方案回读/恢复；
 - .NET Core 38/38、Agent 52/52，Release 构建 0 警告/0 错误，格式检查：通过；
-- 本机安装态回验：版本 2.4.2、运行健康 Healthy、任务 Running/Highest、78 个电源参数、快捷方式、图标与包哈希全部通过；
-- 本机供电识别为 HighPowerAC，安装后配置为 Auto，当前活动档位 Hyper，启动后 Apply 失败数为 0；
-- 发布包：`OpenSynapse-2.4.2.zip` 已生成并通过原生 C# 编译检查。
+- 目标机器安装态：运行健康 Healthy、任务 Running/Highest、78 个电源参数、快捷方式、图标与包哈希全部通过；
+- 目标机器供电识别为 HighPowerAC，安装后配置为 Auto，当前活动档位 Hyper，启动后 Apply 失败数为 0。
 
-## 2026-07-26 Quiet v11 增量验证
+## Quiet 增量验证
 
 - PowerShell 解析、自检和 21 项定义/运行时里程碑测试：通过；
 - Quiet 专项：65/60/50% 三段 CPU 上限、95/95/100 EPP、三类处理器同步和高效核心调度：通过；
@@ -24,19 +21,13 @@
 - NVIDIA Overlay 快速重启检测、30 分钟冷却和提示路径：通过；
 - telemetry schema 2 的 `ActiveProfile`、`BatteryRemainingMwh`、`BatteryVoltageMv`、`EstimatedHours`：通过；
 - OEM 异构核心增减阈值、TGP、风扇和 EC 不写入检查：通过；
-- .NET Core 38/38、Agent 52/52，Release 构建 0 警告/0 错误，格式检查：通过；
-- 发布目录与 `OpenSynapse-2.4.1.zip` 重新生成并通过原生 C# 编译检查；
-- 管理员电源计划回读套件因本轮 UAC 被取消而未执行；本轮没有安装，也没有修改本机现有电源计划。
+- 管理员电源计划回读套件有一轮因 UAC 被取消而未执行；该轮没有安装，也没有修改本机现有电源计划。
 
-## 结论
-
-发布运行时已重新建立在 PowerPilot 2.4.1 的单进程 PowerShell 5.1/WinForms 实现上，不再依赖 WPF、独立 Agent 或命名管道。PowerPilot 配置和系统状态已安全接管，OpenSynapse 计划任务、托盘进程、电源计划、快捷方式和 UI 均可正常运行。
-
-## 自动测试
+## 自动测试边界
 
 - PowerShell 文件解析：通过；
 - 非破坏性脚本/定义测试：21/21 通过；
-- 配置迁移：PowerPilot v1–v10、旧 .NET schema 10、中断接管文档均通过；
+- 配置迁移：旧格式状态、配置和中断接管文档均通过；
 - Razer HID：4 个白名单 PID、DPI/轮询率报告构造、事务和校验和通过；
 - .NET 历史回归：Core 38/38、Agent 52/52；
 - Release 构建：0 警告、0 错误；
@@ -45,9 +36,8 @@
 
 ## 真实安装验证
 
-安装态测试 `Test-LiveInstallation.ps1` 已通过：
+安装态测试 `Test-LiveInstallation.ps1` 已在目标环境通过。公开版本号变更后必须重新执行该测试，确认安装结果与 `0.2.0` 包元数据一致：
 
-- 版本：2.4.2；
 - 任务：Running、Highest、Interactive、登录延迟 PT30S；
 - 运行时：PerMonitorV2、`OpenSynapse.Desktop`、Healthy；
 - 当前设备：Razer Blade 16 RZ09-0528；
@@ -56,9 +46,7 @@
 - Hyper/Balance/Quiet 共 78 个电源参数回读正确；
 - 开始菜单快捷方式、应用图标、托盘图标和发布包哈希一致；
 - 启动后的 Apply 失败数：0；
-- PowerPilot 与旧 `OpenSynapse Agent` 任务已移除，仅保留一个 OpenSynapse 策略引擎。
-
-PowerPilot 的 21 条应用规则已保留。旧 .NET 状态、配置和 PowerPilot 接管记录均已归档。
+- 旧任务和旧状态记录已清理或归档，仅保留一个 OpenSynapse 策略引擎。
 
 ## UI 验证
 

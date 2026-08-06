@@ -1,6 +1,6 @@
-# OpenSynapse 2.4.2
+# OpenSynapse 0.2.0
 
-OpenSynapse 是基于 PowerPilot 2.4.1 重新移植的 Windows 电源、显示与 Razer HID 控制程序。发布版保留原型已验证的单进程 PowerShell 5.1/WinForms 架构，并将产品名、任务、目录、快捷方式和 AppUserModelID 全部更名为 OpenSynapse。
+OpenSynapse 是 Windows 电源、显示与 Razer HID 控制程序。发布版使用单进程 PowerShell 5.1/WinForms 架构，并将产品名、任务、目录、快捷方式和 AppUserModelID 统一为 OpenSynapse。
 
 ## 功能
 
@@ -33,12 +33,11 @@ powershell -ExecutionPolicy Bypass -File .\OpenSynapse.ps1 -Mode Install
 
 确认 UAC 后，安装器会：
 
-1. 恢复并清理旧的 WPF/Agent OpenSynapse；
-2. 如检测到 PowerPilot，归档其配置/状态并调用原卸载入口恢复 Windows；
-3. 将 PowerPilot 配置提升为 OpenSynapse 配置；
-4. 安装到 `%ProgramFiles%\OpenSynapse`；
-5. 注册延迟 30 秒、当前用户、最高权限的 `OpenSynapse` 计划任务；
-6. 创建开始菜单快捷方式并启动托盘。
+1. 清理旧的 OpenSynapse 运行时并保留可恢复状态；
+2. 将已有的本地配置迁移到当前格式；
+3. 安装到 `%ProgramFiles%\OpenSynapse`；
+4. 注册延迟 30 秒、当前用户、最高权限的 `OpenSynapse` 计划任务；
+5. 创建开始菜单快捷方式并启动托盘。
 
 关闭窗口只会隐藏控制面板，自动化仍在托盘中运行。要完整退出并恢复状态，请在 About 页点击 `Exit and restore`，或运行 `Uninstall-OpenSynapse.cmd`。
 
@@ -69,7 +68,7 @@ powershell -ExecutionPolicy Bypass -File .\OpenSynapse.ps1 -Mode Open
 - 日志：`%LOCALAPPDATA%\OpenSynapse\OpenSynapse.log`
 - 遥测历史：`%LOCALAPPDATA%\OpenSynapse\telemetry.jsonl`
 
-配置和状态采用原子替换并保留备份。旧 .NET schema-10 文件和 PowerPilot 接管记录会以独立迁移文件归档，避免被新运行时误读。
+配置和状态采用原子替换并保留备份。旧格式文件和迁移记录会以独立文件归档，避免被新运行时误读。
 
 遥测历史 schema 2 包含实际档位 `ActiveProfile`、剩余容量 `BatteryRemainingMwh`、电池电压 `BatteryVoltageMv` 和平滑续航估算 `EstimatedHours`。
 

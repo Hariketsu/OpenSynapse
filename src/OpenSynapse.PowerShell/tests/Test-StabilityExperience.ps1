@@ -16,7 +16,7 @@ $mainScript = Join-Path (Split-Path -Parent $PSScriptRoot) 'OpenSynapse.ps1'
 $mainSource = Get-Content -Raw -LiteralPath $mainScript
 
 foreach ($required in @(
-    "`$script:AppVersion = '2.4.2'",
+    "`$script:AppVersion = '0.2.0'",
     '[IO.File]::Replace($temporaryPath, $Path, $backupPath, $true)',
     'Recovered JSON from backup',
     '$script:ApplyInProgress',
