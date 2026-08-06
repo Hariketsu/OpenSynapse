@@ -112,7 +112,8 @@ if ('RequestWake' -notin [OpenSynapseNative.DisplayWakeManager].GetMethods().Nam
 }
 $source = Get-Content -Raw -LiteralPath $mainScript
 foreach ($marker in @('Display topology changed while the refresh policy was being applied',
-    'No fallback mode was written while topology was unstable', 'Test-DisplayRepairReadiness')) {
+    'No fallback mode was written while topology was unstable', 'Test-DisplayRepairReadiness',
+    'OpenSynapse cannot reset a monitor controller that is absent from Windows')) {
     if ($source.IndexOf($marker, [StringComparison]::Ordinal) -lt 0) { throw "Missing display resume safety marker: $marker" }
 }
 
@@ -126,6 +127,7 @@ $result = [pscustomobject]@{
     WakeSettleSeconds = $script:DisplayWakeSettleSeconds
     MissingMonitorGraceSeconds = $script:DisplayWakeGraceSeconds
     OneShotWakeRequest = $true
+    MonitorControllerBoundaryPrompt = $true
     ChangedSystemSettings = $false
     CompletedAt = (Get-Date).ToString('o')
 }

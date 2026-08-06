@@ -56,7 +56,7 @@ internal sealed class WindowsDisplaySystem : IDisplaySystem
 
     public void ApplyFixedRefresh(int targetHz) => _ = DynamicRefreshManager.ApplyProfileRefresh(targetHz);
 
-    public void ApplyDynamicNativeRefresh() => _ = DynamicRefreshManager.EnableNativeDynamic();
+    public void ApplyDynamicNativeRefresh() => _ = DynamicRefreshManager.EnableWindowsDynamic();
 
     public void RestoreRefresh() => DynamicRefreshManager.RestoreInternalRegistryModes();
 

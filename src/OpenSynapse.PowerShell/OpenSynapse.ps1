@@ -16,7 +16,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $script:AppName = 'OpenSynapse'
-$script:AppVersion = '2.5.2'
+$script:AppVersion = '2.5.3'
 $script:AppUserModelId = 'OpenSynapse.Desktop'
 $script:TaskName = 'OpenSynapse'
 $script:LegacyAgentTaskName = 'OpenSynapse Agent'
@@ -653,7 +653,7 @@ function Convert-LegacyDotNetConfig {
             'Fixed60' { 'Fixed60'; break }
             'Fixed120' { 'Auto'; break }
             'Fixed240' { 'Fixed240'; break }
-            'DynamicNative' { 'Auto'; break }
+            'DynamicNative' { 'DynamicNative'; break }
             'Unmanaged' { 'Unmanaged'; break }
             default { 'Auto' }
         }
@@ -730,7 +730,7 @@ function Get-AppConfig {
     if ($oldVersion -lt 12 -and [string]$config.RefreshPolicy -in @('FollowProfile', 'FollowMode', 'Fixed120', 'DynamicNative', 'Dynamic60To120')) {
         $config.RefreshPolicy = 'Auto'
     }
-    if ([string]$config.RefreshPolicy -notin @('Auto', 'Fixed60', 'Fixed240', 'Unmanaged')) {
+    if ([string]$config.RefreshPolicy -notin @('Auto', 'DynamicNative', 'Fixed60', 'Fixed240', 'Unmanaged')) {
         $config.RefreshPolicy = 'Auto'
     }
     $config.ManageRefreshRate = ([string]$config.RefreshPolicy -ne 'Unmanaged')
@@ -1269,7 +1269,7 @@ function Resolve-SelectionAfterSupplyTransition {
 
 function Resolve-RefreshPolicyAfterPowerTransition {
     param(
-        [ValidateSet('Auto', 'Fixed60', 'Fixed240', 'Unmanaged')][string]$RefreshPolicy,
+        [ValidateSet('Auto', 'DynamicNative', 'Fixed60', 'Fixed240', 'Unmanaged')][string]$RefreshPolicy,
         [AllowEmptyString()][string]$PreviousPowerSource,
         [AllowEmptyString()][string]$CurrentPowerSource,
         [AllowEmptyString()][string]$PreviousSupplyType = '',
@@ -2937,7 +2937,7 @@ function Apply-DisplayPolicy {
                 if ($refreshPolicy -eq 'DynamicNative') {
                     $dynamicStatus = [OpenSynapseNative.DynamicRefreshManager]::GetStatus()
                     if ([bool]$dynamicStatus.InternalDisplayActive) {
-                        $count = [OpenSynapseNative.DynamicRefreshManager]::EnableNativeDynamic()
+                        $count = [OpenSynapseNative.DynamicRefreshManager]::EnableWindowsDynamic()
                     }
                     else {
                         $count = 0
@@ -2971,7 +2971,8 @@ function Apply-DisplayPolicy {
                     throw 'An external display mode changed while the internal refresh policy was being applied.'
                 }
                 $refreshVerified = $true
-                Write-AppLog "$Name refresh policy=$refreshPolicy changed=$count."
+                $refreshInterface = if ($refreshPolicy -eq 'DynamicNative') { 'Windows CCD/SetDisplayConfig' } else { 'Windows display mode API' }
+                Write-AppLog "$Name refresh policy=$refreshPolicy interface=$refreshInterface changed=$count."
             }
         }
     }
@@ -4429,7 +4430,7 @@ function Get-DisplayStatusText {
             $lines.Add("ICC $($profile.GdiDeviceName): $(if ($profile.Available) { $profile.ProfilePath } else { "unavailable ($($profile.Error))" })")
         }
         foreach ($dynamic in [OpenSynapseNative.DynamicRefreshManager]::GetStatuses()) {
-            $lines.Add("Dynamic refresh $($dynamic.GdiDeviceName): internal=$($dynamic.IsInternal), supported=$($dynamic.Supported), enabled=$($dynamic.Enabled), range=$($dynamic.BaseFrequency)-$($dynamic.BoostFrequency) Hz")
+            $lines.Add("Dynamic refresh $($dynamic.GdiDeviceName): interface=Windows CCD/SetDisplayConfig, internal=$($dynamic.IsInternal), supported=$($dynamic.Supported), enabled=$($dynamic.Enabled), range=$($dynamic.BaseFrequency)-$($dynamic.BoostFrequency) Hz, status=$($dynamic.Message)")
         }
         if (-not [string]::IsNullOrWhiteSpace([string]$script:LastPolicyVerification.VerifiedAtUtc)) {
             $lines.Add("Policy verification: profile=$($script:LastPolicyVerification.Profile), plan=$($script:LastPolicyVerification.PlanVerified), requestedRefresh=$($script:LastPolicyVerification.RefreshPolicy), effectiveRefresh=$($script:LastPolicyVerification.EffectiveRefreshPolicy), refreshVerified=$($script:LastPolicyVerification.RefreshVerified), at=$($script:LastPolicyVerification.VerifiedAtUtc)")
@@ -5266,11 +5267,12 @@ function Start-TrayApplication {
     $refreshLabel.Location = New-Object Drawing.Point(20, 255)
     $refreshLabel.ForeColor = $script:TextMuted
     $optionsGroup.Controls.Add($refreshLabel)
-    $script:RefreshPolicyValues = @('Auto', 'Fixed60', 'Fixed240', 'Unmanaged')
+    $script:RefreshPolicyValues = @('Auto', 'DynamicNative', 'Fixed60', 'Fixed240', 'Unmanaged')
     $script:RefreshPolicyBox = New-Object Windows.Forms.ComboBox
     $script:RefreshPolicyBox.DropDownStyle = 'DropDownList'
     [void]$script:RefreshPolicyBox.Items.AddRange(@(
         'Auto: battery / PD dynamic 60-240 Hz; verified 280W fixed 240 Hz',
+        'Windows DRR: internal dynamic 60-240 Hz via Windows CCD API',
         'Eco: internal fixed 60 Hz (returns to Auto when power is connected)',
         'Internal fixed 240 Hz (returns to Auto when power is connected)',
         'Do not manage refresh rate'
@@ -6481,9 +6483,9 @@ function Start-TrayApplication {
                     $script:LastKnownExternalMonitorKeys = @(Get-ExternalMonitorIdentityKeys $stableDisplayState)
                     $script:LastKnownResponsiveExternalMonitorKeys = @(Get-ResponsiveExternalMonitorIdentityKeys $stableDisplayState)
                     if ([string]$displayReadiness.Reason -eq 'ExpectedMonitorGraceExpired') {
-                        Write-AppLog "Display wake grace expired with $(@($displayReadiness.MissingExpectedKeys).Count) expected external monitor(s) absent; only the stable current topology was managed."
+                        Write-AppLog "Display wake grace expired with $(@($displayReadiness.MissingExpectedKeys).Count) expected external monitor(s) absent or DDC/CI-unresponsive; only the stable current topology was managed. OpenSynapse cannot reset a monitor controller that is absent from Windows."
                         $script:TrayIcon.BalloonTipTitle = 'External display did not return'
-                        $script:TrayIcon.BalloonTipText = 'Windows did not restore an expected external display after wake. OpenSynapse left the missing path untouched and managed only the stable active topology.'
+                        $script:TrayIcon.BalloonTipText = 'Windows did not restore the monitor path. OpenSynapse left it untouched. If the monitor OSD is also frozen, power-cycle the monitor because its controller is not reachable from software.'
                         $script:TrayIcon.ShowBalloonTip(6000)
                     }
                     Write-AppLog "Display repair completed after stable topology; reason=$repairReason; external=$(@($script:LastKnownExternalMonitorKeys).Count)."

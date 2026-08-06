@@ -1,11 +1,11 @@
 @echo off
 setlocal
-title OpenSynapse 2.5.2 Installer
+title OpenSynapse 2.5.3 Installer
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0OpenSynapse.ps1" -Mode Install
 set "EXITCODE=%ERRORLEVEL%"
 echo.
 if "%EXITCODE%"=="0" (
-echo OpenSynapse 2.5.2 installation completed.
+echo OpenSynapse 2.5.3 installation completed.
 ) else (
   echo Installation failed with exit code %EXITCODE%.
 )

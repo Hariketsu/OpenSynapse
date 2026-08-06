@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.5.3
+
+- 重新公开独立 `Windows DRR` 刷新策略；该选项在任意供电下只对内屏调用 Windows CCD `SetDisplayConfig`，并在写入前验证、写入后回读 60–240 Hz 动态范围。
+- Auto 语义保持不变：电池、PD 与未确认 AC 使用 Windows DRR，确认 280W 后内屏固定 240 Hz；Eco 与 Experiment 仍优先执行各自锁定策略。
+- 外屏动态刷新状态现在明确报告为“不受 OpenSynapse 管理”，不再因为外屏路径带有虚拟模式标志而误报支持 Windows DRR。
+- 修正保留的 .NET Agent 对 eDP/嵌入式 DisplayPort 输出类型识别不完整的问题，并保留兼容的 Native 方法别名。
+- 外屏在唤醒宽限期后仍缺失或 DDC/CI 无响应时，明确提示显示器控制器已无法由软件寻址；不自动重启显卡或写入外屏模式。
+
 ## 2.5.2
 
 - 将 Auto、Eco、固定刷新率、旧版迁移及 Experiment 恢复中的刷新率写入完全限定到内屏；外接显示器刷新率始终保持不受管理。

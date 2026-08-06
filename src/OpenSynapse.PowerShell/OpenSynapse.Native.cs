@@ -2236,12 +2236,14 @@ namespace OpenSynapseNative
                 info.GdiDeviceName = GetSourceName(path);
                 info.IsInternal = IsInternal(path);
                 info.InternalDisplayActive = info.IsInternal;
-                info.Supported = (path.flags & DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE) != 0;
+                info.Supported = info.IsInternal && (path.flags & DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE) != 0;
                 info.Enabled = (path.flags & DISPLAYCONFIG_PATH_BOOST_REFRESH_RATE) != 0;
                 info.BaseFrequency = RationalHz(path.targetInfo.refreshRate);
                 info.BoostFrequency = TargetModeHz(path, modes);
-                info.Message = info.Supported ? "Windows dynamic refresh is available." :
-                    "The active path does not advertise virtual refresh support.";
+                info.Message = info.IsInternal
+                    ? (info.Supported ? "Windows CCD reports a candidate dynamic-refresh path." :
+                        "The active internal path does not advertise virtual refresh support.")
+                    : "External refresh is unmanaged by OpenSynapse.";
                 result.Add(info);
             }
             return result.ToArray();
@@ -2250,7 +2252,22 @@ namespace OpenSynapseNative
         public static DynamicRefreshInfo GetStatus()
         {
             foreach (DynamicRefreshInfo item in GetStatuses())
-                if (item.IsInternal) return item;
+            {
+                if (!item.IsInternal) continue;
+                try
+                {
+                    item.Supported = item.Supported && ValidateNativeDynamic();
+                    item.Message = item.Supported
+                        ? "Windows CCD validated dynamic refresh through SetDisplayConfig."
+                        : "Windows CCD rejected the dynamic-refresh validation request.";
+                }
+                catch (Exception error)
+                {
+                    item.Supported = false;
+                    item.Message = "Windows CCD dynamic-refresh validation failed: " + error.Message;
+                }
+                return item;
+            }
             return new DynamicRefreshInfo
             {
                 Key = String.Empty,
@@ -2341,6 +2358,11 @@ namespace OpenSynapseNative
             return SetDisplayConfig((uint)paths.Length, paths, (uint)modes.Length, modes, flags) == ERROR_SUCCESS;
         }
 
+        public static bool ValidateWindowsDynamic()
+        {
+            return ValidateNativeDynamic();
+        }
+
         public static int EnableNativeDynamic()
         {
             DynamicRefreshInfo before = GetStatus();
@@ -2379,6 +2401,11 @@ namespace OpenSynapseNative
                 throw new InvalidOperationException("Windows accepted the request but did not report a valid native dynamic refresh range.");
             }
             return changed + 1;
+        }
+
+        public static int EnableWindowsDynamic()
+        {
+            return EnableNativeDynamic();
         }
 
         public static bool Validate60To120()

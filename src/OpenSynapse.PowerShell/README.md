@@ -1,4 +1,4 @@
-# OpenSynapse 2.5.2
+# OpenSynapse 2.5.3
 
 OpenSynapse 是基于 PowerPilot 2.4.1 重新移植的 Windows 电源、显示与 Razer HID 控制程序。发布版保留原型已验证的单进程 PowerShell 5.1/WinForms 架构，并将产品名、任务、目录、快捷方式和 AppUserModelID 全部更名为 OpenSynapse。
 
@@ -77,6 +77,6 @@ powershell -ExecutionPolicy Bypass -File .\OpenSynapse.ps1 -Mode Open
 
 遥测历史 schema 6 包含实际档位 `ActiveProfile`、剩余容量 `BatteryRemainingMwh`、电池电压 `BatteryVoltageMv`、平滑续航估算 `EstimatedHours`，以及 GPU/NPU 可用性、温度/节流、逐屏模式/ICC/HDR/DRR/缩放/亮度、刷新策略、主循环周期和离电高耗电进程证据。离电硬件与显示状态最多每 60 秒采样一次，闲置 dGPU 不会被自动实验报告唤醒。
 
-供电分类只有在读数不高于 85 W 时才视为强 PD 证据，并从任意启动档位统一经过 30 秒预热和三次间隔采样；一次不低于 130 W 的读数仍会立即确认 280W 级适配器。OpenSynapse 不管理外屏刷新率；内屏 Auto 在离电/PD/未确认 AC 使用原生 60–240 Hz 动态刷新，确认 280W 后固定 240 Hz。手动固定 60/240 Hz 在新接入外部供电时恢复 Auto；动态刷新应用或回读验证失败时，只有内屏安全回退到 Eco 60 Hz。所有档位的 AC 普通/锁屏显示关闭时间为 15 分钟，AC 待机为 3 小时。
+供电分类只有在读数不高于 85 W 时才视为强 PD 证据，并从任意启动档位统一经过 30 秒预热和三次间隔采样；一次不低于 130 W 的读数仍会立即确认 280W 级适配器。OpenSynapse 不管理外屏刷新率；内屏 Auto 在离电/PD/未确认 AC 使用 Windows CCD/SetDisplayConfig 原生 60–240 Hz DRR，确认 280W 后固定 240 Hz。也可手动选择 Windows DRR，使内屏在任何供电下交由 Windows 动态调节；手动固定 60/240 Hz 在新接入外部供电时恢复 Auto。动态刷新应用或回读验证失败时，只有内屏安全回退到 Eco 60 Hz。所有档位的 AC 普通/锁屏显示关闭时间为 15 分钟，AC 待机为 3 小时。
 
 详见 `TEST-REPORT.md`。

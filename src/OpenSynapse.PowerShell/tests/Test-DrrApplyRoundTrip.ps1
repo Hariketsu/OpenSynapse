@@ -48,7 +48,7 @@ try {
     if ($internalBefore.Count -ne 1) { throw 'The active internal display mode could not be mapped.' }
     $restoreHz = [int]$internalBefore[0].Frequency
     $externalBefore = Get-ExternalModeMap $beforeModes $internalDeviceName
-    if (-not [OpenSynapseNative.DynamicRefreshManager]::ValidateNativeDynamic()) {
+    if (-not [OpenSynapseNative.DynamicRefreshManager]::ValidateWindowsDynamic()) {
         throw 'Windows rejected the native dynamic refresh validation request.'
     }
 
@@ -59,7 +59,7 @@ try {
         throw 'An external display mode changed while applying the internal fixed refresh test.'
     }
     $fixedPath = [OpenSynapseNative.DynamicRefreshManager]::GetStatus()
-    $null = [OpenSynapseNative.DynamicRefreshManager]::EnableNativeDynamic()
+    $null = [OpenSynapseNative.DynamicRefreshManager]::EnableWindowsDynamic()
     $enabled = [OpenSynapseNative.DynamicRefreshManager]::GetStatus()
     if (-not $enabled.Enabled -or [Math]::Abs($enabled.BaseFrequency - 60) -gt 1 -or
         [Math]::Abs($enabled.BoostFrequency - 240) -gt 1) {

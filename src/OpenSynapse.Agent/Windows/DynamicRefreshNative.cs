@@ -155,7 +155,7 @@ public static class DynamicRefreshManager
         throw new Win32Exception(InsufficientBuffer, "Display paths kept changing.");
     }
 
-    private static bool IsInternal(PathInfo path) => path.Target.OutputTechnology == InternalOutput;
+    private static bool IsInternal(PathInfo path) => path.Target.OutputTechnology is 6u or 11u or 13u or InternalOutput;
 
     private static string[] GetDisplayDeviceNames(bool internalDisplay)
     {
@@ -216,9 +216,18 @@ public static class DynamicRefreshManager
             info.Enabled = (path.Flags & BoostRefreshRate) != 0;
             info.BaseFrequency = RationalHz(path.Target.RefreshRate);
             info.BoostFrequency = TargetModeHz(path, modes);
-            info.Message = info.Supported
-                ? "Windows dynamic refresh is available."
-                : "The active internal path does not advertise virtual refresh support.";
+            try
+            {
+                info.Supported = info.Supported && ValidateNativeDynamic();
+                info.Message = info.Supported
+                    ? "Windows CCD validated dynamic refresh through SetDisplayConfig."
+                    : "Windows CCD rejected the dynamic-refresh validation request.";
+            }
+            catch (Exception error)
+            {
+                info.Supported = false;
+                info.Message = "Windows CCD dynamic-refresh validation failed: " + error.Message;
+            }
             return info;
         }
         return info;
@@ -243,6 +252,8 @@ public static class DynamicRefreshManager
             | SetVirtualModeAware | SetVirtualRefreshRateAware;
         return SetDisplayConfig((uint)paths.Length, paths, (uint)modes.Length, modes, flags) == Success;
     }
+
+    public static bool ValidateWindowsDynamic() => ValidateNativeDynamic();
 
     public static int EnableNativeDynamic()
     {
@@ -279,6 +290,8 @@ public static class DynamicRefreshManager
         }
         return changed + 1;
     }
+
+    public static int EnableWindowsDynamic() => EnableNativeDynamic();
 
     public static int Disable()
     {

@@ -1,5 +1,16 @@
 # OpenSynapse 验证报告
 
+## 2026-08-06 2.5.3 Windows DRR 与 Odyssey G7 唤醒审计
+
+- 新增独立 `Windows DRR` 设置；只对活动内屏使用 Windows 11 CCD `QueryDisplayConfig`/`SetDisplayConfig`、`QDC/SDC_VIRTUAL_REFRESH_RATE_AWARE` 和 `DISPLAYCONFIG_PATH_BOOST_REFRESH_RATE`，写入前以 `SDC_VALIDATE` 验证，写入后回读 Enabled、BaseFrequency 与 BoostFrequency。
+- Auto 继续在 Battery/PD/UnknownAC 使用 Windows DRR、确认 280W 后固定内屏 240 Hz；手动 Windows DRR 在供电切换时保持，Eco/Experiment 的锁定语义保持不变。外屏状态明确报告为 Unmanaged。
+- 当前活动拓扑只有三星 `DISPLAY\\SAM105C`（Generic Monitor `LC27G7xT`）外屏 2560×1440@240 Hz，由 AMD Radeon 880M 驱动；内屏设备存在但未处于活动显示路径，因此本轮不宣称完成内屏 60–240 Hz 真实写入测试。
+- 2026-08-06 18:19 从休眠恢复时，System 日志没有 `Display`、`amdwddmg` 或 `nvlddmkm` 崩溃/TDR；18:21 OpenSynapse 2.5.1 启动时只见内屏，记录 `external=0`。20:13 重启后外屏重新枚举，当前 DDC/CI 亮度端点恢复可读。
+- 结合故障时外屏 OSD 无法打开、氛围灯冻结，故障边界位于显示器控制器/HPD/DisplayPort 链路而非普通 Windows 桌面黑屏；目标与 DDC 端点消失后，用户态软件不能可靠重置显示器 MCU。2.5.3 只做缺失/无响应检测、30 秒宽限和明确断电重启提示，不自动重启显卡或强写外屏拓扑。
+- 当前安装态运行记录仍为 2.5.1 且计划任务缺失；2.5.3 尚未安装。本轮仅修改、测试并打包源代码，避免在用户未授权时替换本机运行环境。
+- PowerShell 24/24 项定义与运行时测试、.NET Core 39/39、Agent 53/53、格式、安装器定义及 SelfTest 全部通过；所有非管理员测试报告未更改系统设置。
+- 未修改 GPU/MUX 选择、OEM 异构核心阈值、EC、风扇、TGP 或 DeathAdder V3 Pro HID 控制路径。
+
 ## 2026-08-04 2.5.2 内屏刷新率隔离与交流电超时
 
 - 所有刷新率写入均限定到内屏：固定刷新率、Auto/DRR、Maximum、失败回退、普通退出、旧版迁移和 Experiment 恢复均不改写外屏刷新率；Experiment 仍恢复外屏其他逐屏状态。

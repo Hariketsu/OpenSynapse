@@ -65,7 +65,7 @@ if ((Resolve-RefreshPolicy $config Quiet $low) -ne 'Fixed60') {
     throw 'Eco did not enforce internal 60 Hz over an unmanaged refresh preference.'
 }
 $config.Selection = 'Auto'
-foreach ($policy in @('Fixed60', 'Fixed240', 'Unmanaged')) {
+foreach ($policy in @('DynamicNative', 'Fixed60', 'Fixed240', 'Unmanaged')) {
     $config.RefreshPolicy = $policy
     $config.ManageRefreshRate = ($policy -ne 'Unmanaged')
     if ((Resolve-RefreshPolicy $config Quiet $low) -ne $policy) { throw "Persistent refresh override failed for $policy." }
@@ -75,6 +75,7 @@ if ((Resolve-RefreshPolicyAfterPowerTransition Fixed60 Battery AC) -ne 'Auto' -o
     (Resolve-RefreshPolicyAfterPowerTransition Fixed60 AC AC LowPowerPD HighPowerAC) -ne 'Auto' -or
     (Resolve-RefreshPolicyAfterPowerTransition Unmanaged Battery AC Battery HighPowerAC Quiet Auto) -ne 'Auto' -or
     (Resolve-RefreshPolicyAfterPowerTransition Fixed60 AC AC) -ne 'Fixed60' -or
+    (Resolve-RefreshPolicyAfterPowerTransition DynamicNative Battery AC) -ne 'DynamicNative' -or
     (Resolve-RefreshPolicyAfterPowerTransition Auto Battery AC) -ne 'Auto') {
     throw 'Manual fixed refresh did not return to Auto exactly when external power was newly connected.'
 }
@@ -84,7 +85,7 @@ foreach ($method in @('ApplyFixedRefresh', 'GetSupportedRefreshRates')) {
     if ($method -notin $nativeMethods) { throw "Missing native refresh method: $method" }
 }
 $dynamicMethods = [OpenSynapseNative.DynamicRefreshManager].GetMethods().Name
-foreach ($method in @('GetStatus', 'GetStatuses', 'RestoreStatus', 'ValidateNativeDynamic', 'EnableNativeDynamic', 'Disable', 'ApplyInternalMaximumRefresh', 'ApplyInternalFixedRefresh', 'ApplyProfileRefresh', 'RestoreInternalRegistryModes')) {
+foreach ($method in @('GetStatus', 'GetStatuses', 'RestoreStatus', 'ValidateNativeDynamic', 'ValidateWindowsDynamic', 'EnableNativeDynamic', 'EnableWindowsDynamic', 'Disable', 'ApplyInternalMaximumRefresh', 'ApplyInternalFixedRefresh', 'ApplyProfileRefresh', 'RestoreInternalRegistryModes')) {
     if ($method -notin $dynamicMethods) { throw "Missing dynamic refresh method: $method" }
 }
 if ('ApplyExternalMaximumRefresh' -in $dynamicMethods) { throw 'External refresh mutation remains exposed by the profile refresh manager.' }
@@ -111,7 +112,7 @@ if ((Get-ExternalDisplayModeFingerprint $displayState) -eq $externalFingerprint)
 
 $mainSource = Get-Content -Raw -LiteralPath $mainScript
 foreach ($required in @(
-    "`$script:AppVersion = '2.5.2'",
+    "`$script:AppVersion = '2.5.3'",
     "New-CustomPlan 'OpenSynapse Balance'",
     'Set-ProfilePolicy Balance $balanceGuid',
     "New-CustomPlan 'OpenSynapse Experiment'",
@@ -120,6 +121,8 @@ foreach ($required in @(
     "'Fixed60' { [OpenSynapseNative.DynamicRefreshManager]::ApplyProfileRefresh(60); break }",
     "'Fixed240' { [OpenSynapseNative.DynamicRefreshManager]::ApplyProfileRefresh(240); break }",
     'ApplyInternalMaximumRefresh()',
+    'EnableWindowsDynamic()',
+    "@('Auto', 'DynamicNative', 'Fixed60', 'Fixed240', 'Unmanaged')",
     'external display refresh is unmanaged'
 )) {
     if ($mainSource.IndexOf($required, [StringComparison]::Ordinal) -lt 0) { throw "Missing install/upgrade/rollback definition: $required" }
@@ -134,7 +137,8 @@ $result = [pscustomobject]@{
     Result = 'PASS'
     SupplyCases = $cases.Count
     BalanceThresholdPercent = 50
-    RefreshPolicies = 4
+    RefreshPolicies = 5
+    ExplicitWindowsDrr = $true
     AutoPortableDynamic = $true
     AutoHighPowerFixed240 = $true
     ManualQuietEcoFixed60 = $true
