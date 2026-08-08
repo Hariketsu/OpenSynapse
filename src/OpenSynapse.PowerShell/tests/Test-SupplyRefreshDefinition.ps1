@@ -66,7 +66,7 @@ $dynamicStatus = [OpenSynapseNative.DynamicRefreshManager]::GetStatus()
 
 $mainSource = Get-Content -Raw -LiteralPath $mainScript
 foreach ($required in @(
-    "`$script:AppVersion = '0.2.0'",
+    "`$script:AppVersion = '0.2.0-preview.1'",
     "New-CustomPlan 'OpenSynapse Balance'",
     'Set-ProfilePolicy Balance $balanceGuid',
     "@('HyperPlanGuid', 'BalancePlanGuid', 'QuietPlanGuid')"

@@ -9,14 +9,16 @@ param(
     [string]$CaptureUiPath = '',
 
     [ValidateSet('Dashboard', 'Game', 'Settings', 'Diagnostics', 'About')]
-    [string]$CaptureUiPage = 'Dashboard'
+    [string]$CaptureUiPage = 'Dashboard',
+
+    [switch]$InstallerManagedFiles
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $script:AppName = 'OpenSynapse'
-$script:AppVersion = '0.2.0'
+$script:AppVersion = '0.2.0-preview.1'
 $script:AppUserModelId = 'OpenSynapse.Desktop'
 $script:TaskName = 'OpenSynapse'
 $script:LegacyAgentTaskName = 'OpenSynapse Agent'
@@ -2755,7 +2757,9 @@ function Uninstall-OpenSynapse {
     Remove-LegacyAutostarts
     Remove-Item -LiteralPath $script:ShortcutPath -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $script:ShowRequestPath -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath $script:ProgramDir -Recurse -Force -ErrorAction SilentlyContinue
+    if (-not $InstallerManagedFiles) {
+        Remove-Item -LiteralPath $script:ProgramDir -Recurse -Force -ErrorAction SilentlyContinue
+    }
     Remove-Item -LiteralPath $script:DataDir -Recurse -Force -ErrorAction SilentlyContinue
     Write-Host 'OpenSynapse was removed; original power, wake, display, brightness and service states were restored.'
 }
@@ -3938,7 +3942,7 @@ function Start-TrayApplication {
     Set-RazerButtonStyle $restoreButton $false
     $pageAbout.Controls.Add($restoreButton)
     $aboutVersion = New-Object Windows.Forms.Label
-    $aboutVersion.Text = 'OpenSynapse 0.2.0 public preview'
+    $aboutVersion.Text = "OpenSynapse $script:AppVersion public preview"
     $aboutVersion.Location = New-Object Drawing.Point(484, 540)
     $aboutVersion.Size = New-Object Drawing.Size(420, 32)
     $aboutVersion.ForeColor = $script:TextMuted

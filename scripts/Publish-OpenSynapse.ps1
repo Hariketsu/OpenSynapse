@@ -1,5 +1,7 @@
 [CmdletBinding()]
 param(
+    [ValidatePattern('^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$')]
+    [string]$Version = '0.2.0-preview.1',
     [ValidateSet('win-x64', 'win-arm64')][string]$Runtime = 'win-x64',
     [switch]$FrameworkDependent,
     [string]$DotnetPath
@@ -11,7 +13,7 @@ $source = Join-Path $root 'src\OpenSynapse.PowerShell'
 $artifacts = [IO.Path]::GetFullPath((Join-Path $root 'artifacts'))
 $publishRoot = [IO.Path]::GetFullPath((Join-Path $artifacts 'publish'))
 $output = [IO.Path]::GetFullPath((Join-Path $publishRoot 'OpenSynapse'))
-$zipPath = [IO.Path]::GetFullPath((Join-Path $artifacts 'OpenSynapse-0.2.0.zip'))
+$zipPath = [IO.Path]::GetFullPath((Join-Path $artifacts "OpenSynapse-$Version.zip"))
 $separator = [IO.Path]::DirectorySeparatorChar
 $artifactsPrefix = $artifacts.TrimEnd($separator, [IO.Path]::AltDirectorySeparatorChar) + $separator
 if (-not $output.StartsWith($artifactsPrefix, [StringComparison]::OrdinalIgnoreCase) -or
@@ -63,5 +65,5 @@ if ($LASTEXITCODE -ne 0) { throw "Published native helper compilation failed wit
 if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
 Compress-Archive -Path (Join-Path $output '*') -DestinationPath $zipPath -CompressionLevel Optimal
 
-Write-Host "OpenSynapse 0.2.0 package: $output"
-Write-Host "OpenSynapse 0.2.0 archive: $zipPath"
+Write-Host "OpenSynapse $Version package: $output"
+Write-Host "OpenSynapse $Version archive: $zipPath"

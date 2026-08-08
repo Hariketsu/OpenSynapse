@@ -2,7 +2,7 @@
 
 ## Release runtime
 
-OpenSynapse 0.2.0 uses the single-process Windows PowerShell 5.1 execution model because it has already passed the target-machine installation, power-policy, display, DPI and stability test suite.
+OpenSynapse 0.2.0-preview.1 uses the single-process Windows PowerShell 5.1 execution model because it has already passed the target-machine installation, power-policy, display, DPI and stability test suite.
 
 ```mermaid
 flowchart TD

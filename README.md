@@ -4,13 +4,13 @@
 
 OpenSynapse is a local-first Windows control center for power, display, automation, and selected Razer HID capabilities. It applies explicit policies, records inspectable local state, and keeps a rollback path for the system state it changes.
 
-> **Version 0.2.0 is the first public release target.** It is intended to be a narrowly supported preview, not a universal gaming-laptop control utility.
+> **Version 0.2.0-preview.1 is the first public preview.** It is narrowly supported and is not a universal gaming-laptop control utility.
 
 ## Is this for you?
 
 OpenSynapse currently targets Windows 11 systems where power and display behavior needs to be observable and reversible. The primary validation environment is a Razer Blade 16 (2025), model `RZ09-0528`.
 
-| Area | Available in 0.2.0 | Evidence and boundary |
+| Area | Available in 0.2.0-preview.1 | Evidence and boundary |
 | --- | --- | --- |
 | Power policies | Auto, Hyper, Balance, and Quiet; power-plan and battery-aware automation | Validated on the target system; policy values are hardware and firmware dependent |
 | Smart Auto | Application, fullscreen, CPU/GPU load, supply classification, and hysteresis signals | Falls back conservatively when hardware evidence is unavailable |
@@ -62,7 +62,7 @@ Closing the window hides the control panel. **Exit and restore** is the operatio
 
 ### Preview package
 
-The first public package will be attached to the GitHub Release for `0.2.0` together with release notes and a SHA-256 checksum. Until that Release exists, the repository is source-first and does not provide a supported download path.
+The first public preview is published as GitHub pre-release `v0.2.0-preview.1` with a Setup executable, a ZIP package, release notes, and SHA-256 checksums.
 
 ### Build from source
 
@@ -74,7 +74,7 @@ powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1
 powershell -ExecutionPolicy Bypass -File scripts\Publish-OpenSynapse.ps1
 ```
 
-The package is generated under `artifacts\publish\OpenSynapse` and `artifacts\OpenSynapse-0.2.0.zip`.
+The packages are generated as `artifacts\OpenSynapse-Setup-0.2.0-preview.1.exe` and `artifacts\OpenSynapse-0.2.0-preview.1.zip`.
 
 ### Install and restore
 

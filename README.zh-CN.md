@@ -4,13 +4,13 @@
 
 OpenSynapse 是一个本地优先的 Windows 控制中心，用于管理电源、显示、自动化和部分 Razer HID 能力。它应用明确的系统策略，记录可检查的本地状态，并为已修改的系统状态保留恢复路径。
 
-> **0.2.0 是首个公开版本目标。** 这是一个有明确适用范围的预览版，不是通用的游戏本控制工具。
+> **0.2.0-preview.1 是首个公开预览版。** 这是一个有明确适用范围的版本，不是通用的游戏本控制工具。
 
 ## 适合谁使用
 
 OpenSynapse 面向需要观察并可恢复电源、显示行为的 Windows 11 系统。当前主要验证环境是 Razer Blade 16（2025），型号 `RZ09-0528`。
 
-| 领域 | 0.2.0 可用能力 | 证据与边界 |
+| 领域 | 0.2.0-preview.1 可用能力 | 证据与边界 |
 | --- | --- | --- |
 | 电源策略 | Auto、Hyper、Balance、Quiet；电源方案与电池感知自动化 | 已在目标系统验证；策略值受硬件和固件影响 |
 | Smart Auto | 应用、全屏、CPU/GPU 负载、供电分类与迟滞信号 | 缺少硬件证据时会保守回退 |
@@ -62,7 +62,7 @@ OpenSynapse 面向需要观察并可恢复电源、显示行为的 Windows 11 �
 
 ### 预览包
 
-首个公开包将作为 GitHub `0.2.0` Release 附件发布，同时提供发布说明和 SHA-256 校验值。在 Release 建立之前，仓库以源码为主，不提供受支持的下载路径。
+首个公开预览包通过 GitHub Pre-release `v0.2.0-preview.1` 发布，提供 Setup 安装器、ZIP 包、发布说明和 SHA-256 校验值。
 
 ### 从源码构建
 
@@ -74,7 +74,7 @@ powershell -ExecutionPolicy Bypass -File scripts\Test-Milestones.ps1
 powershell -ExecutionPolicy Bypass -File scripts\Publish-OpenSynapse.ps1
 ```
 
-发布目录为 `artifacts\publish\OpenSynapse`，压缩包为 `artifacts\OpenSynapse-0.2.0.zip`。
+发布产物为 `artifacts\OpenSynapse-Setup-0.2.0-preview.1.exe` 和 `artifacts\OpenSynapse-0.2.0-preview.1.zip`。
 
 ### 安装与恢复
 

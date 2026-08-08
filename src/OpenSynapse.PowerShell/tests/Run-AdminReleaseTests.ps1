@@ -49,7 +49,7 @@ foreach ($test in $tests) {
 
 $summary = [pscustomobject]@{
     Result = 'PASS'
-    Version = '0.2.0'
+    Version = '0.2.0-preview.1'
     Tests = $records.ToArray()
     CompletedAt = (Get-Date).ToString('o')
 }

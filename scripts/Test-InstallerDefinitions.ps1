@@ -8,8 +8,10 @@ $nativePath = Join-Path $root 'src\OpenSynapse.PowerShell\OpenSynapse.Native.cs'
 $publishPath = Join-Path $PSScriptRoot 'Publish-OpenSynapse.ps1'
 $installPath = Join-Path $PSScriptRoot 'Install-OpenSynapse.ps1'
 $uninstallPath = Join-Path $PSScriptRoot 'Uninstall-OpenSynapse.ps1'
+$setupBuildPath = Join-Path $PSScriptRoot 'Build-Setup.ps1'
+$setupDefinitionPath = Join-Path $root 'installer\OpenSynapse.iss'
 
-foreach ($path in @($mainPath, $nativePath, $publishPath, $installPath, $uninstallPath)) {
+foreach ($path in @($mainPath, $nativePath, $publishPath, $installPath, $uninstallPath, $setupBuildPath, $setupDefinitionPath)) {
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing installer input: $path" }
 }
 
@@ -21,6 +23,8 @@ $mainSource = Get-Content -LiteralPath $mainPath -Raw -Encoding UTF8
 $publishSource = Get-Content -LiteralPath $publishPath -Raw -Encoding UTF8
 $installSource = Get-Content -LiteralPath $installPath -Raw -Encoding UTF8
 $uninstallSource = Get-Content -LiteralPath $uninstallPath -Raw -Encoding UTF8
+$setupBuildSource = Get-Content -LiteralPath $setupBuildPath -Raw -Encoding UTF8
+$setupDefinitionSource = Get-Content -LiteralPath $setupDefinitionPath -Raw -Encoding UTF8
 foreach ($required in @(
     "`$script:TaskName = 'OpenSynapse'",
     "`$script:LegacyAgentTaskName = 'OpenSynapse Agent'",
@@ -32,15 +36,26 @@ foreach ($required in @(
     'function Remove-LegacyPowerPilotRuntime',
     'PowerPilot-2.4.1-migration-',
     '-File $powerPilotScript -Mode Uninstall',
-    "ValidateSet('Run', 'Open', 'Install', 'Uninstall', 'Status', 'Apply', 'SelfTest')"
+    "ValidateSet('Run', 'Open', 'Install', 'Uninstall', 'Status', 'Apply', 'SelfTest')",
+    '-InstallerManagedFiles'
 )) {
     if ($mainSource.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "Installer runtime definition is missing: $required"
     }
 }
-foreach ($required in @('src\OpenSynapse.PowerShell', 'OpenSynapse-0.2.0.zip', 'Compress-Archive')) {
+foreach ($required in @('src\OpenSynapse.PowerShell', 'OpenSynapse-$Version.zip', 'Compress-Archive')) {
     if ($publishSource.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "Publisher definition is missing: $required"
+    }
+}
+foreach ($required in @('OpenSynapse-Setup-$Version.exe', 'ISCC.exe')) {
+    if ($setupBuildSource.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "Setup builder definition is missing: $required"
+    }
+}
+foreach ($required in @('PrivilegesRequired=admin', "RunOpenSynapse('Install', False)", "RunOpenSynapse('Uninstall', True)", 'OpenSynapse-Setup-{#MyAppVersion}')) {
+    if ($setupDefinitionSource.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
+        throw "Inno Setup definition is missing: $required"
     }
 }
 if ($installSource.IndexOf('-Mode Install', [StringComparison]::Ordinal) -lt 0) {

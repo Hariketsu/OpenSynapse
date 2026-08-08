@@ -1,4 +1,4 @@
-# OpenSynapse 0.2.0
+# OpenSynapse 0.2.0-preview.1
 
 OpenSynapse 是 Windows 电源、显示与 Razer HID 控制程序。发布版使用单进程 PowerShell 5.1/WinForms 架构，并将产品名、任务、目录、快捷方式和 AppUserModelID 统一为 OpenSynapse。
 
