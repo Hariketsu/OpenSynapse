@@ -32,7 +32,7 @@ UninstallDisplayIcon={app}\OpenSynapse.App.ico
 UninstallDisplayName={#MyAppName} {#MyAppVersion}
 VersionInfoVersion=0.2.0.1
 VersionInfoProductName={#MyAppName}
-VersionInfoProductVersion={#MyAppVersion}
+VersionInfoProductVersion=0.2.0.1
 VersionInfoCompany={#MyAppPublisher}
 
 [Files]
