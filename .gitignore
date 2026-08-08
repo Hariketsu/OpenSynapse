@@ -1,5 +1,5 @@
-.DS_Store
 Thumbs.db
+.DS_Store
 Desktop.ini
 
 bin/
@@ -27,3 +27,4 @@ TestResults/
 !.env.example
 *.pfx
 *.p12
+handoff/
