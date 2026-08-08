@@ -77,7 +77,10 @@ jobs:
             $hash = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant()
             "$hash  $([IO.Path]::GetFileName($package))"
           }
-          $checksums | Set-Content -LiteralPath "$PWD\artifacts\SHA256SUMS.txt" -Encoding ascii
+          [IO.File]::WriteAllText(
+            "$PWD\artifacts\SHA256SUMS.txt",
+            ($checksums -join "`n") + "`n",
+            [Text.UTF8Encoding]::new($false))
       - uses: actions/upload-artifact@v4
         with:
           name: OpenSynapse-${{ env.RELEASE_VERSION }}
