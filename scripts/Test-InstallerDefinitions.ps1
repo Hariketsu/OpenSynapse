@@ -37,7 +37,7 @@ foreach ($required in @(
     'PowerPilot-2.4.1-migration-',
     '-File $powerPilotScript -Mode Uninstall',
     "ValidateSet('Run', 'Open', 'Install', 'Uninstall', 'Status', 'Apply', 'SelfTest')",
-    '-InstallerManagedFiles'
+    '[switch]$InstallerManagedFiles'
 )) {
     if ($mainSource.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "Installer runtime definition is missing: $required"
