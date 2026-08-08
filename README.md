@@ -1,6 +1,11 @@
 # OpenSynapse
 
-[![Build](https://github.com/Hariketsu/OpenSynapse/actions/workflows/build.yml/badge.svg)](https://github.com/Hariketsu/OpenSynapse/actions/workflows/build.yml) [简体中文](README.zh-CN.md)
+[English](README.md) | [简体中文](README.zh-CN.md)
+
+[![Build](https://github.com/Hariketsu/OpenSynapse/actions/workflows/build.yml/badge.svg)](https://github.com/Hariketsu/OpenSynapse/actions/workflows/build.yml)
+[![Release](https://img.shields.io/github/v/release/Hariketsu/OpenSynapse?include_prereleases&sort=semver&display_name=tag&label=release)](https://github.com/Hariketsu/OpenSynapse/releases)
+[![License: GPL-2.0-only](https://img.shields.io/badge/license-GPL--2.0--only-blue.svg)](LICENSE)
+[![Platform: Windows 11](https://img.shields.io/badge/platform-Windows%2011-0078D4?logo=windows11&logoColor=white)](https://www.microsoft.com/windows/windows-11)
 
 OpenSynapse is a local-first Windows control center for power, display, automation, and selected Razer HID capabilities. It applies explicit policies, records inspectable local state, and keeps a rollback path for the system state it changes.
 

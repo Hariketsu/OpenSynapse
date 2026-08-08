@@ -1,6 +1,11 @@
 # OpenSynapse
 
-[![构建](https://github.com/Hariketsu/OpenSynapse/actions/workflows/build.yml/badge.svg)](https://github.com/Hariketsu/OpenSynapse/actions/workflows/build.yml) [English](README.md)
+[English](README.md) | [简体中文](README.zh-CN.md)
+
+[![构建](https://github.com/Hariketsu/OpenSynapse/actions/workflows/build.yml/badge.svg)](https://github.com/Hariketsu/OpenSynapse/actions/workflows/build.yml)
+[![发布版本](https://img.shields.io/github/v/release/Hariketsu/OpenSynapse?include_prereleases&sort=semver&display_name=tag&label=release)](https://github.com/Hariketsu/OpenSynapse/releases)
+[![许可证：GPL-2.0-only](https://img.shields.io/badge/license-GPL--2.0--only-blue.svg)](LICENSE)
+[![平台：Windows 11](https://img.shields.io/badge/platform-Windows%2011-0078D4?logo=windows11&logoColor=white)](https://www.microsoft.com/windows/windows-11)
 
 OpenSynapse 是一个本地优先的 Windows 控制中心，用于管理电源、显示、自动化和部分 Razer HID 能力。它应用明确的系统策略，记录可检查的本地状态，并为已修改的系统状态保留恢复路径。
 
