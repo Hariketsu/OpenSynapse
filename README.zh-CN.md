@@ -23,7 +23,7 @@ OpenSynapse 已实现 M0–M3 开发切片。完成代码实现不等于通过�
 
 | 领域 | 当前能力 | 成熟度 |
 | --- | --- | --- |
-| Windows 策略 | Smart Auto、Hyper、Balance、Eco 与锁定式 Experiment；电源方案、仅内屏 Windows DRR/固定刷新率、Advanced Color/HDR、逐屏亮度和显示缩放 | 2.5.3 Windows CCD 动态刷新控制已测试 |
+| Windows 策略 | Smart Auto、Hyper、Balance、Eco 与锁定式 Experiment；电源方案、仅内屏 Windows DRR/固定刷新率、Advanced Color/HDR、逐屏亮度和显示缩放 | 0.2.0-preview.2 Windows CCD 动态刷新控制已测试 |
 | Smart Auto | 供电、CPU/GPU、前台/全屏应用、应用规则、迟滞、临时模式、dGPU 连续活动诊断 | 已实现；GPU 不可用时安全回退到 CPU/窗口信号 |
 | 状态恢复 | 显示模式、ICC 关联/哈希、HDR、DRR、缩放、WMI/DDC 亮度的原子捕获及回读恢复，以及旧 .NET/PowerPilot 接管 | 使用硬件身份检查拓扑，避免内外屏同名 DISPLAY1 误判 |
 | 研究遥测 | Experiment 环境报告、GPU/NPU 可用性、温度/节流、屏幕和策略证据 | 已实现；缺失计数器会明确标记，不伪造 0% |
@@ -79,7 +79,7 @@ powershell -ExecutionPolicy Bypass -File scripts\Publish-OpenSynapse.ps1
 powershell -ExecutionPolicy Bypass -File scripts\Install-OpenSynapse.ps1
 ```
 
-发布结果位于 `artifacts\publish\OpenSynapse` 和 `artifacts\OpenSynapse-2.5.3.zip`。如果旧 .NET Agent 仍存在，安装器会先调用它恢复已捕获状态；如果旧二进制已不存在，则直接恢复旧状态中的电源计划、显示、亮度和唤醒权限。如果检测到已安装且正在运行的 PowerPilot，安装器会归档它的配置和恢复状态，调用 PowerPilot 自身的卸载流程恢复 Windows，并把用户配置提升为 OpenSynapse 配置。随后才会清理旧运行时、安装 `%ProgramFiles%\OpenSynapse`、注册唯一的最高权限当前用户任务并创建开始菜单快捷方式。
+发布结果位于 `artifacts\publish\OpenSynapse` 和 `artifacts\OpenSynapse-0.2.0-preview.2.zip`。如果旧 .NET Agent 仍存在，安装器会先调用它恢复已捕获状态；如果旧二进制已不存在，则直接恢复旧状态中的电源计划、显示、亮度和唤醒权限。如果检测到已安装且正在运行的 PowerPilot，安装器会归档它的配置和恢复状态，调用 PowerPilot 自身的卸载流程恢复 Windows，并把用户配置提升为 OpenSynapse 配置。随后才会清理旧运行时、安装 `%ProgramFiles%\OpenSynapse`、注册唯一的最高权限当前用户静默启动任务并创建开始菜单快捷方式。
 
 在可随时恢复、配置完全明确的 Windows 环境中运行完整管理员测试：
 

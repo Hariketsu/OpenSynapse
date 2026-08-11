@@ -112,7 +112,7 @@ if ((Get-ExternalDisplayModeFingerprint $displayState) -eq $externalFingerprint)
 
 $mainSource = Get-Content -Raw -LiteralPath $mainScript
 foreach ($required in @(
-    "`$script:AppVersion = '2.5.3'",
+    "`$script:AppVersion = '0.2.0-preview.2'",
     "New-CustomPlan 'OpenSynapse Balance'",
     'Set-ProfilePolicy Balance $balanceGuid',
     "New-CustomPlan 'OpenSynapse Experiment'",

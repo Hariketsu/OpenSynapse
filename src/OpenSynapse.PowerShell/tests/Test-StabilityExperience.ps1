@@ -20,7 +20,7 @@ if ([string]::Equals([IO.Path]::GetFullPath($script:DataDir), [IO.Path]::GetFull
 }
 
 foreach ($required in @(
-    "`$script:AppVersion = '2.5.3'",
+    "`$script:AppVersion = '0.2.0-preview.2'",
     '[IO.File]::Replace($temporaryPath, $Path, $backupPath, $true)',
     'Recovered JSON from backup',
     '$script:ApplyInProgress',
@@ -31,11 +31,18 @@ foreach ($required in @(
     'Update-RuntimeHeartbeat',
     '$script:PendingDisplayRepairAt = (Get-Date).AddSeconds(10)',
     "Health: `$healthText",
-    'Existing-instance wake request failed'
+    'Existing-instance wake request failed',
+    '[switch]$SilentStartup',
+    'New-Object Windows.Forms.ApplicationContext',
+    '[Windows.Forms.Application]::Run($applicationContext)',
+    'Startup visibility initialized:'
 )) {
     if ($mainSource.IndexOf($required, [StringComparison]::Ordinal) -lt 0) {
         throw "Missing stability/experience definition: $required"
     }
+}
+if ($mainSource.IndexOf('[Windows.Forms.Application]::Run($script:Form)', [StringComparison]::Ordinal) -ge 0) {
+    throw 'Startup still runs the message loop with a visible main form before hiding it.'
 }
 
 $temporary = Join-Path (Split-Path -Parent $PSScriptRoot) '.stability-test'
@@ -75,6 +82,7 @@ $result = [pscustomobject]@{
     RuntimeHeartbeat = $true
     DisplayRepairRetry = $true
     ExistingInstanceWake = $true
+    SilentStartupMessageLoop = $true
     SelfTestDataIsolated = $true
     ChangedSystemSettings = $false
     CompletedAt = (Get-Date).ToString('o')

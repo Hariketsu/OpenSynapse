@@ -1,5 +1,13 @@
 # OpenSynapse 验证报告
 
+## 2026-08-11 0.2.0-preview.2 静默启动审计
+
+- 当日日志显示每次测试时间点只有一个托盘进程启动，没有同一分钟内的计划任务连续崩溃重启证据。
+- 已确认原实现使用 `Application.Run($script:Form)`，会先让 WinForms 主窗体进入可见状态，再在 `Shown` 事件隐藏，是登录后界面闪现的直接软件原因。
+- 新实现使用无主窗体 `ApplicationContext` 消息循环；计划任务传入 `-SilentStartup`，没有明确 `show.request` 时主窗体从未显示。
+- 快捷方式和托盘的显式打开请求继续调用 `Show-ControlPanel`，不会因静默启动而失去控制界面。
+- 版本序列按用户指定调整为 `0.2.0-preview.2`；OEM 核心阈值、TGP、风扇、EC、MUX、显示策略与鼠标 HID 路径均未改动。
+
 ## 2026-08-06 2.5.3 Windows DRR 与 Odyssey G7 唤醒审计
 
 - 新增独立 `Windows DRR` 设置；只对活动内屏使用 Windows 11 CCD `QueryDisplayConfig`/`SetDisplayConfig`、`QDC/SDC_VIRTUAL_REFRESH_RATE_AWARE` 和 `DISPLAYCONFIG_PATH_BOOST_REFRESH_RATE`，写入前以 `SDC_VALIDATE` 验证，写入后回读 Enabled、BaseFrequency 与 BoostFrequency。

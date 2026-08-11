@@ -23,7 +23,7 @@ OpenSynapse currently implements the M0–M3 development slice. Implementation d
 
 | Area | Current capability | Maturity |
 | --- | --- | --- |
-| Windows policies | Adapter-aware Auto, Hyper, Balance, Eco, and locked Experiment selection; power plans; internal-panel-only Windows DRR/fixed refresh; Advanced Color/HDR; per-display brightness; display scaling; optional wake-device control | 2.5.3 Windows CCD DRR control tested |
+| Windows policies | Adapter-aware Auto, Hyper, Balance, Eco, and locked Experiment selection; power plans; internal-panel-only Windows DRR/fixed refresh; Advanced Color/HDR; per-display brightness; display scaling; optional wake-device control | 0.2.0-preview.2 Windows CCD DRR control tested |
 | State restoration | Atomic capture and read-back restoration of display modes, ICC association/hash, HDR, DRR, scaling, WMI/DDC brightness, legacy .NET rollback, PowerPilot takeover, and power plans | Hardware-identity topology checks prevent internal/external DISPLAY1 substitution |
 | Research telemetry | Experiment environment reports; GPU/NPU availability, thermal/throttle, screen and policy evidence | Implemented; unavailable counters are reported explicitly rather than synthesized |
 | Desktop control | Single elevated PowerShell 5.1/WinForms tray process, installed as a delayed highest-privilege per-user task | Installed and live-validated |
@@ -80,7 +80,7 @@ powershell -ExecutionPolicy Bypass -File scripts\Publish-OpenSynapse.ps1
 powershell -ExecutionPolicy Bypass -File scripts\Install-OpenSynapse.ps1
 ```
 
-The package is written to `artifacts\publish\OpenSynapse` and `artifacts\OpenSynapse-2.5.3.zip`. The installer first asks the obsolete .NET Agent to restore its captured state when that binary is available; otherwise it restores the legacy power, display, brightness and wake state directly. If an installed PowerPilot runtime exists, its configuration and recovery state are archived, its own verified uninstaller restores Windows, and that configuration is promoted to OpenSynapse. The installer then removes the obsolete split runtime, copies the PowerShell implementation under `%ProgramFiles%\OpenSynapse`, registers one delayed highest-privilege per-user task, and creates an OpenSynapse Start menu shortcut. To uninstall and restore the captured state:
+The package is written to `artifacts\publish\OpenSynapse` and `artifacts\OpenSynapse-0.2.0-preview.2.zip`. The installer first asks the obsolete .NET Agent to restore its captured state when that binary is available; otherwise it restores the legacy power, display, brightness and wake state directly. If an installed PowerPilot runtime exists, its configuration and recovery state are archived, its own verified uninstaller restores Windows, and that configuration is promoted to OpenSynapse. The installer then removes the obsolete split runtime, copies the PowerShell implementation under `%ProgramFiles%\OpenSynapse`, registers one delayed highest-privilege per-user task with silent startup, and creates an OpenSynapse Start menu shortcut. To uninstall and restore the captured state:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\Uninstall-OpenSynapse.ps1

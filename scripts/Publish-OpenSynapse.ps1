@@ -11,7 +11,7 @@ $source = Join-Path $root 'src\OpenSynapse.PowerShell'
 $artifacts = [IO.Path]::GetFullPath((Join-Path $root 'artifacts'))
 $publishRoot = [IO.Path]::GetFullPath((Join-Path $artifacts 'publish'))
 $output = [IO.Path]::GetFullPath((Join-Path $publishRoot 'OpenSynapse'))
-$zipPath = [IO.Path]::GetFullPath((Join-Path $artifacts 'OpenSynapse-2.5.3.zip'))
+$zipPath = [IO.Path]::GetFullPath((Join-Path $artifacts 'OpenSynapse-0.2.0-preview.2.zip'))
 $separator = [IO.Path]::DirectorySeparatorChar
 $artifactsPrefix = $artifacts.TrimEnd($separator, [IO.Path]::AltDirectorySeparatorChar) + $separator
 if (-not $output.StartsWith($artifactsPrefix, [StringComparison]::OrdinalIgnoreCase) -or
@@ -63,5 +63,5 @@ if ($LASTEXITCODE -ne 0) { throw "Published native helper compilation failed wit
 if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
 Compress-Archive -Path (Join-Path $output '*') -DestinationPath $zipPath -CompressionLevel Optimal
 
-Write-Host "OpenSynapse 2.5.3 package: $output"
-Write-Host "OpenSynapse 2.5.3 archive: $zipPath"
+Write-Host "OpenSynapse 0.2.0-preview.2 package: $output"
+Write-Host "OpenSynapse 0.2.0-preview.2 archive: $zipPath"

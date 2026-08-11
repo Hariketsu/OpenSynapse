@@ -30,7 +30,7 @@ foreach ($required in @(
     'ApplyDarkFrame($script:Form.Handle)',
     'Apply-DarkControlTheme $script:Form',
     '$menu.BackColor = $script:ControlDark',
-    "`$script:AppVersion = '2.5.3'"
+    "`$script:AppVersion = '0.2.0-preview.2'"
 )) {
     $haystack = if ($required -eq 'DarkMode_CFD') { $nativeSource } else { $mainSource }
     if ($haystack.IndexOf($required, [StringComparison]::Ordinal) -lt 0) { throw "Missing dark theme definition: $required" }

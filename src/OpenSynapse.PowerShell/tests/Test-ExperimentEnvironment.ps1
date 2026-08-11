@@ -126,7 +126,7 @@ try {
         throw 'Experiment report did not create JSON, HTML and SHA-256 outputs.'
     }
     $manifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $report.JsonPath | ConvertFrom-Json
-    if ($manifest.ReportSchemaVersion -ne 1 -or $manifest.OpenSynapseVersion -ne '2.5.3' -or
+    if ($manifest.ReportSchemaVersion -ne 1 -or $manifest.OpenSynapseVersion -ne '0.2.0-preview.2' -or
         @($manifest.Display.Modes).Count -lt 1 -or $null -eq $manifest.HardwareTelemetry -or
         $null -eq $manifest.WindowsGpuTelemetry -or $null -eq $manifest.Machine -or
         $null -eq $manifest.Machine.PSObject.Properties['EmbeddedControllerVersion']) {

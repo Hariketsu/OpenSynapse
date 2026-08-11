@@ -3,6 +3,8 @@ param(
     [ValidateSet('Run', 'Open', 'Install', 'Uninstall', 'Status', 'Apply', 'SelfTest')]
     [string]$Mode = 'Run',
 
+    [switch]$SilentStartup,
+
     [ValidateSet('Auto', 'Hyper', 'Balance', 'Quiet', 'Experiment')]
     [string]$Profile = 'Auto',
 
@@ -16,7 +18,7 @@ Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
 $script:AppName = 'OpenSynapse'
-$script:AppVersion = '2.5.3'
+$script:AppVersion = '0.2.0-preview.2'
 $script:AppUserModelId = 'OpenSynapse.Desktop'
 $script:TaskName = 'OpenSynapse'
 $script:LegacyAgentTaskName = 'OpenSynapse Agent'
@@ -4021,7 +4023,7 @@ function Register-OpenSynapseTask {
     Unregister-ScheduledTask -TaskName $script:TaskName -Confirm:$false -ErrorAction SilentlyContinue
 
     $powerShellPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $arguments = '-NoProfile -WindowStyle Hidden -STA -ExecutionPolicy Bypass -File "{0}" -Mode Run' -f $script:InstalledScript
+    $arguments = '-NoLogo -NoProfile -NonInteractive -WindowStyle Hidden -STA -ExecutionPolicy Bypass -File "{0}" -Mode Run -SilentStartup' -f $script:InstalledScript
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $action = New-ScheduledTaskAction -Execute $powerShellPath -Argument $arguments -WorkingDirectory $script:ProgramDir
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $identity
@@ -4036,7 +4038,8 @@ function Register-OpenSynapseTask {
 
     $registered = Get-ScheduledTask -TaskName $script:TaskName -ErrorAction Stop
     if ($registered.Principal.RunLevel.ToString() -ne 'Highest') { throw 'Scheduled task is not configured for highest privileges.' }
-    if ($registered.Actions.Execute -notmatch 'powershell\.exe$' -or $registered.Actions.Arguments -notlike "*$script:InstalledScript*") {
+    if ($registered.Actions.Execute -notmatch 'powershell\.exe$' -or $registered.Actions.Arguments -notlike "*$script:InstalledScript*" -or
+        $registered.Actions.Arguments -notlike '*-SilentStartup*') {
         throw 'Scheduled task action verification failed.'
     }
     if ([string]$registered.Triggers[0].Delay -ne 'PT30S') { throw 'Scheduled task logon delay verification failed.' }
@@ -6640,10 +6643,13 @@ function Start-TrayApplication {
         $null = [OpenSynapseNative.WindowTheme]::ApplyDarkFrame($script:Form.Handle)
         Apply-DarkControlTheme $script:Form
         Update-ApplicationUi
-        if (-not $showOnStart) { $script:Form.Hide() } else { Update-DetailBox }
+        Update-DetailBox
     })
 
-    try { [Windows.Forms.Application]::Run($script:Form) }
+    $applicationContext = New-Object Windows.Forms.ApplicationContext
+    if ($showOnStart) { Show-ControlPanel }
+    Write-AppLog "Startup visibility initialized: silent=$([bool]$SilentStartup); explicitShow=$showOnStart; formVisible=$($script:Form.Visible)."
+    try { [Windows.Forms.Application]::Run($applicationContext) }
     finally {
         try { [OpenSynapseNative.DisplayChangeSignal]::Stop() } catch { }
         try { [OpenSynapseNative.PowerChangeSignal]::Stop() } catch { }
@@ -6654,6 +6660,7 @@ function Start-TrayApplication {
         if ($null -ne $script:BrandImageResource) { $script:BrandImageResource.Dispose() }
         if ($null -ne $script:TrayIconResource) { $script:TrayIconResource.Dispose() }
         if ($null -ne $script:FormIconResource) { $script:FormIconResource.Dispose() }
+        $applicationContext.Dispose()
         Remove-Item -LiteralPath $script:RuntimePath -Force -ErrorAction SilentlyContinue
         Write-AppLog 'Tray stopped.'
         if ($hasHandle) { $mutex.ReleaseMutex() }

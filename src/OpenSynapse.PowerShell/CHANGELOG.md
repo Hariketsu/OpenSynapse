@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0-preview.2
+
+- 将后续开发版本序列调整为 `0.2.0-preview.2`，并同步应用、发布包、安装/卸载入口、遥测及测试断言中的当前版本号。
+- 开机计划任务新增显式 `-SilentStartup` 参数，并继续使用 `-NoLogo`、`-NoProfile`、`-NonInteractive` 与隐藏窗口模式。
+- 托盘运行时改用无主窗体 `ApplicationContext` 消息循环；启动时不再先显示完整 WinForms 主窗体再于 `Shown` 事件隐藏，从根源消除桌面登录后的界面闪现。
+- 开始菜单或托盘产生明确显示请求时仍会正常打开控制面板；单实例、最高权限、30 秒登录延迟和后台自动化保持不变。
+
 ## 2.5.3
 
 - 重新公开独立 `Windows DRR` 刷新策略；该选项在任意供电下只对内屏调用 Windows CCD `SetDisplayConfig`，并在写入前验证、写入后回读 60–240 Hz 动态范围。

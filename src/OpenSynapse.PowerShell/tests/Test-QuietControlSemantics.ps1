@@ -150,7 +150,7 @@ try {
     }
     Write-TelemetryRecord $telemetrySnapshot $manualState Quiet Quiet '' Quiet
     $record = Get-Content -LiteralPath $script:TelemetryPath -Raw | ConvertFrom-Json
-    if ($record.SchemaVersion -ne 6 -or $record.OpenSynapseVersion -ne '2.5.3' -or
+    if ($record.SchemaVersion -ne 6 -or $record.OpenSynapseVersion -ne '0.2.0-preview.2' -or
         $record.SupplyClassifierVersion -ne 2 -or $record.RawSupplyType -ne 'Battery' -or
         $record.SupplyConfirmationPending -or $record.ActiveProfile -ne 'Quiet' -or
         $record.BatteryRemainingMwh -ne 64000 -or $record.BatteryVoltageMv -ne 16335 -or
